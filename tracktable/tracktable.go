@@ -125,7 +125,7 @@ func SendTracks(tracks []*Track) {
 func adsbToTrackPoint(m *adsb.Msg) flightdb.TrackPoint {
 	tp := flightdb.TrackPoint{
 		Source: "ADSB",
-		Station: "sauron",
+		Station: "ScottsValley",
 		TimestampUTC: m.GeneratedTimestampUTC,
 		Heading: float64(m.Track), // Direction of travel, not direction pointed in; badly named
 		Latlong: m.Position,
@@ -154,6 +154,7 @@ func (track Track)Send() {
 	
 	resp,err := http.PostForm("http://"+host+path, url.Values{
 		"icaoid": {string(track.Icao)},
+		"callsign": {string(track.LastCallsign)},
 		"track": {outBase64},
 	})
 
