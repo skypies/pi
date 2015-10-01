@@ -61,7 +61,7 @@ func main() {
 	scanner := bufio.NewScanner(getIoReader())
 
 	table := tracktable.New()
-	table.WaitTime = 10 // If a given transponder goes quiet for 3000, ship the track
+	table.WaitTime = 300 // If a given transponder goes quiet for 3000, ship the track
 	
 	// Main goroutine: read input, add it to the TrackTable
 	i := 1
