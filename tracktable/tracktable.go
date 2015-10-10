@@ -11,8 +11,10 @@ import (
 )
 
 type TrackTable struct {
-	WaitTime int64 // time.Seconds
-	Tracks   map[adsb.IcaoId]*Track
+	StationName string
+	PostURL     string // host/path, where to push finished tracks to
+	WaitTime    int64  // time.Seconds
+	Tracks      map[adsb.IcaoId]*Track
 }
 
 type Track struct {
@@ -152,7 +154,7 @@ func (track Track)Send() {
 	outTrack := track.ToFlightDBTrack()
 	outBase64,_ := outTrack.Base64Encode()
 
-	return // XXX DISABLED FOR SAFETY
+	//return // XXX DISABLED FOR SAFETY
 	
 	resp,err := http.PostForm("http://"+host+path, url.Values{
 		"icaoid": {string(track.Icao)},
