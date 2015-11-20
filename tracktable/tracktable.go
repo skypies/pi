@@ -127,7 +127,7 @@ func SendTracks(tracks []*Track) {
 func adsbToTrackPoint(m *adsb.Msg) flightdb.TrackPoint {
 	tp := flightdb.TrackPoint{
 		Source: "ADSB",
-		Station: "StationName",  // Needs to come from a command line variable
+		Station: "ScottsValley",  // Needs to come from a command line variable
 		TimestampUTC: m.GeneratedTimestampUTC,
 		Heading: float64(m.Track), // Direction of travel, not direction pointed in; badly named
 		Latlong: m.Position,
