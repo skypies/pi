@@ -178,7 +178,6 @@ func (mb *MsgBuffer)flush() {
 
 // MaybeAdd looks at a new message, and updates the buffer as appropriate.
 func (mb *MsgBuffer)Add(m *adsb.Msg) {
-	//fmt.Printf(" * %s\n", m)
 
 	mb.ageOutQuietSenders()
 	
