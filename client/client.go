@@ -47,7 +47,6 @@ func getIoReader() io.Reader {
 		} else {
 			Log.Printf("connecting to '%s' (dumpPos=%v)", fHostPort, fDumpPos)
 			return conn // a net.Conn implements io.Reader
-			// status, err := bufio.NewReader(conn).ReadString('\n')
 		}
 
 	} else {
@@ -74,6 +73,7 @@ func main() {
 			Log.Fatal(err)
 			continue
 		}
+
 		//Log.Printf("   --- %s\n", text)
 		table.AddMessage(&m)
 		if (i % kSweepAfter) == 0 { table.Sweep() }
