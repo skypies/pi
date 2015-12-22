@@ -58,10 +58,10 @@ func main() {
 			time.Sleep(time.Second * 1)
 			continue
 		}
-		Log.Printf("Pull: found %d ADSB", len(*msgs))
+		//Log.Printf("Pull: found %d ADSB", len(*msgs))
 
 		newMsgs := airspace.MaybeUpdate(msgs)
-		Log.Printf("Pull: %d were new (%d already seen)", len(newMsgs), len(*msgs)-len(newMsgs))
+		//Log.Printf(" %d were new (%d already seen)", len(newMsgs), len(*msgs)-len(newMsgs))
 
 		for i,msg := range newMsgs {
 			Log.Printf(" new: [%2d] %s\n", i, msg)
