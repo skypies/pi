@@ -1,3 +1,6 @@
+// The receiver application attaches to a socket that writes out SBS formatted messages.
+// It filters out the interesting ones, and aggregates together fields from different messages, to
+// build useful packets. These are then published up to a topic in Google Cloud PubSub.
 package main
 
 // go run receiver.go -f ~/skypi/sbs1.out
@@ -7,24 +10,15 @@ package main
 
 import (
 	"bufio"
-	"bytes"
-	"encoding/gob"
-	//"fmt"	
 	"flag"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
-	//"time"
-
-	"google.golang.org/cloud"
-	"google.golang.org/cloud/pubsub"
-	"golang.org/x/net/context"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
-
+	"sync"
+	
 	"github.com/skypies/adsb"
+	"github.com/skypies/pi/pubsub"
 	"github.com/skypies/pi/msgbuffer"
 )
 
@@ -53,20 +47,6 @@ func init() {
 	Log = log.New(os.Stdout,"", log.Ldate|log.Ltime)//|log.Lshortfile)
 }
 
-func getPubsubContext() context.Context {
-	jsonKey, err := ioutil.ReadFile(fJsonAuthFile)
-	if err != nil { Log.Fatal(err) }
-
-	conf, err := google.JWTConfigFromJSON(
-    jsonKey,
-    pubsub.ScopeCloudPlatform,
-    pubsub.ScopePubSub,
-	)
-	if err != nil { Log.Fatalf("JWTConfigFromJson failed: %v", err) }
-
-	return cloud.NewContext(fProjectName, conf.Client(oauth2.NoContext))
-}
-
 func getIoReader() io.Reader {
 	if fFilename != "" {
 		if osFile, err := os.Open(fFilename); err != nil {
@@ -87,53 +67,39 @@ func getIoReader() io.Reader {
 	}
 }
 
-// This function runs in its own goroutine, so as not to hold up reading new messages
-func publishMsgs(c context.Context, msgs *[]*adsb.CompositeMsg) error {
-	for i,msg := range *msgs {
-		Log.Printf("- [%02d]%s\n", i, msg)
-		(*msgs)[i].ReceiverName = fReceiverName // Claim this message, for upstream fame & glory
-	}
-
-	var buf bytes.Buffer
-	if err := gob.NewEncoder(&buf).Encode(*msgs); err != nil {
-		return err
-	}
-	msgIDs, err := pubsub.Publish(c, fPubsubTopic, &pubsub.Message{
-    Data: buf.Bytes(),
-	})
-
-	if err != nil {
-		Log.Fatalf("pubsub.Publish failed: %v", err)
-	} else {
-		Log.Printf("Published a message with a message id: %s\n", msgIDs[0])
-	}
-	
-	return err
-}
-
 func main() {
+	wg := &sync.WaitGroup{}
 	scanner := bufio.NewScanner(getIoReader())
 	mb := msgbuffer.NewMsgBuffer()
-	mb.MaxMessageAgeSeconds = 0
+	mb.MaxMessageAgeSeconds = 0//1000000 // Kinda screwy when reading old data from files
 
-	adsb.TimeLocation = fDump1090TimeLocation  // This is kinda grievous
+	adsb.TimeLocation = fDump1090TimeLocation  // This is grievous
 	
-	c := getPubsubContext()
+	c := pubsub.GetContext(fJsonAuthFile, fProjectName)
 	mb.FlushFunc = func(msgs []*adsb.CompositeMsg) {
-		go publishMsgs(c, &msgs)
+		wg.Add(1)
+		go func(msgs *[]*adsb.CompositeMsg) {
+			pubsub.PublishMsgs(c, fPubsubTopic, fReceiverName, msgs)
+			wg.Done()
+		}(&msgs)
 	}
 	
 	for scanner.Scan() {
 		msg := adsb.Msg{}
 		text := scanner.Text()
 		if err := msg.FromSBS1(text); err != nil {
-			Log.Fatal(err)
+			Log.Print(err)
 			continue
 		}
+		//msg.ReceiverName = fReceiverName // Claim this message, for upstream fame & glory
 		mb.Add(&msg)
 
 		if err := scanner.Err(); err != nil {
 			Log.Fatal(err)
 		}
 	}
+
+	mb.FinalFlush()
+	wg.Wait()
+	Log.Print("Final clean shutdown")
 }

@@ -204,6 +204,13 @@ func (mb *MsgBuffer)Add(m *adsb.Msg) {
 }
 
 // }}}
+// {{{ MsgBuffer.FinalFlush
+
+func (mb *MsgBuffer)FinalFlush() {
+	mb.flush()
+}
+
+// }}}
 
 // {{{ -------------------------={ E N D }=----------------------------------
 
