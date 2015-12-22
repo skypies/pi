@@ -3,10 +3,11 @@
 // build useful packets. These are then published up to a topic in Google Cloud PubSub.
 package main
 
-// go run receiver.go -f ~/skypi/sbs1.out
-// go run receiver.go -h northpi:30003
+// go get github.com/skypies/pi/receiver
+// go build github.com/skypies/pi/receiver
+// receiver -h northpi:30003
 
-// https://godoc.org/google.golang.org/cloud/pubsub#Publish
+// go run receiver.go -f ~/skypi/sbs1.out
 
 import (
 	"bufio"
@@ -71,7 +72,7 @@ func main() {
 	wg := &sync.WaitGroup{}
 	scanner := bufio.NewScanner(getIoReader())
 	mb := msgbuffer.NewMsgBuffer()
-	mb.MaxMessageAgeSeconds = 0//1000000 // Kinda screwy when reading old data from files
+	mb.MaxMessageAgeSeconds = 10//1000000 // Kinda screwy when reading old data from files
 
 	adsb.TimeLocation = fDump1090TimeLocation  // This is grievous
 	
