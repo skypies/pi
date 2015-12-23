@@ -1,0 +1,15 @@
+runtime: go
+module: consolidator
+#api_version: go1
+api_version: 1
+vm: true
+manual_scaling:
+  instances: 1
+
+handlers:
+- url: /_ah/start
+  script: _go_app
+- url: /now
+  script: _go_app
+- url: /
+  script: _go_app

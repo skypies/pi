@@ -6,45 +6,88 @@ package pubsub
 import (
 	"bytes"
 	"encoding/gob"
-	"io/ioutil"
-	"log"
-	"os"
+	"fmt"
 	"time"
+
+	"google.golang.org/appengine"
 
 	"google.golang.org/cloud"
 	"google.golang.org/cloud/pubsub"
 	"golang.org/x/net/context"
-	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
-
+	
 	"github.com/skypies/adsb"
 )
 
-// I'm not convinced this pacakge should have its own logger
-var Log *log.Logger
-func init() {
-	Log = log.New(os.Stdout,"", log.Ldate|log.Ltime)//|log.Lshortfile)
-}
+// {{{ GetAppEngineContext, GetDevContext
 
-func GetContext(jsonAuthFilename, projectName string) context.Context {
-	jsonKey, err := ioutil.ReadFile(jsonAuthFilename)
-	if err != nil { Log.Fatal(err) }
-
-	conf, err := google.JWTConfigFromJSON(
-    jsonKey,
+func wrapContext(projectName string, in context.Context) context.Context {
+	client, err := google.DefaultClient(
+    in,
     pubsub.ScopeCloudPlatform,
     pubsub.ScopePubSub,
 	)
-	if err != nil { Log.Fatalf("JWTConfigFromJson failed: %v", err) }
+	if err != nil {
+		panic(fmt.Sprintf("g.DefaultClient failed: %v", err))
+	}
 
-	return cloud.NewContext(projectName, conf.Client(oauth2.NoContext))
+	return cloud.NewContext(projectName, client)
 }
+
+func GetAppEngineContext(projectName string) context.Context {
+	return wrapContext(projectName, appengine.BackgroundContext())
+}
+
+// cp serfr0-fdb-blahblah.json ~/.config/gcloud/application_default_credentials.json
+func GetDevContext(projectName string) context.Context {
+	return wrapContext(projectName, context.TODO())
+}
+
+// }}}
+// {{{ PurgeSub
+
+func PurgeSub(c context.Context, subscription, topic string) error {
+	if err := pubsub.DeleteSub(c, subscription); err != nil {
+		return err
+	}
+	return pubsub.CreateSub(c, subscription, topic, 10*time.Second, "")
+}
+
+// }}}
+// {{{ Setup
+
+func Setup (c context.Context, inTopic, inSub, outTopic string) error {
+	if exists,err := pubsub.TopicExists(c,inTopic); err != nil {
+		return err
+	} else if !exists {
+		if err := pubsub.CreateTopic(c,inTopic); err != nil { return err }
+	}
+
+	if exists,err := pubsub.TopicExists(c,outTopic); err != nil {
+		return err
+	} else if !exists {
+		if err := pubsub.CreateTopic(c,outTopic); err != nil { return err }
+	}
+
+	if exists,err := pubsub.SubExists(c,inSub); err != nil {
+		return err
+	} else if !exists {
+		if err := pubsub.CreateSub(c, inSub, inTopic, 10*time.Second, ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// }}}
+
+// {{{ PublishMsgs
 
 // This function runs in its own goroutine, so as not to hold up reading new messages
 // https://godoc.org/google.golang.org/cloud/pubsub#Publish
 func PublishMsgs(c context.Context, topic,receiverName string, msgs *[]*adsb.CompositeMsg) error {
-	for i,msg := range *msgs {
-		Log.Printf("- [%02d]%s\n", i, msg)
+	for i,_ := range *msgs {
+		//log.Infof(c, "- [%02d]%s\n", i, msg)
 		(*msgs)[i].ReceiverName = receiverName // Claim this message, for upstream fame & glory
 	}
 
@@ -52,18 +95,21 @@ func PublishMsgs(c context.Context, topic,receiverName string, msgs *[]*adsb.Com
 	if err := gob.NewEncoder(&buf).Encode(*msgs); err != nil {
 		return err
 	}
-	msgIDs, err := pubsub.Publish(c, topic, &pubsub.Message{
+	_, err := pubsub.Publish(c, topic, &pubsub.Message{
 		Data: buf.Bytes(),
 	})
 
 	if err != nil {
-		Log.Fatalf("pubsub.Publish failed: %v", err)
+		//log.Errorf(c, "pubsub.Publish failed: %v", err)
 	} else {
-		Log.Printf("Published a message with a message id: %s\n", msgIDs[0])
+		//log.Infof(c, "Published a message with a message id: %s\n", msgIDs[0])
 	}
 		
 	return err
 }
+
+// }}}
+// {{{ Pull
 
 // https://godoc.org/google.golang.org/cloud/pubsub#example-Publish
 func Pull(c context.Context, subscription string, numBundles int) (*[]*adsb.CompositeMsg, error) {
@@ -90,13 +136,13 @@ func Pull(c context.Context, subscription string, numBundles int) (*[]*adsb.Comp
 	return &msgs,nil
 }
 
-func PurgeSub(c context.Context, subscription, topic string) {
-	//if exists,err := pubsub.TopicExists(c, topic); ... {}
+// }}}
 
-	if err := pubsub.DeleteSub(c, subscription); err != nil {
-		Log.Fatalf("DeleteSub failed: %v", err)
-	}
-	if err := pubsub.CreateSub(c, subscription, topic, 10*time.Second, ""); err != nil {
-		Log.Fatalf("CreateSub failed: %v", err)
-	}
-}
+
+// {{{ -------------------------={ E N D }=----------------------------------
+
+// Local variables:
+// folded-file: t
+// end:
+
+// }}}
