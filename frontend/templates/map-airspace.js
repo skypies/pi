@@ -6,32 +6,31 @@ function localOverlay() {
     div.innerHTML = {{.Legend}};
     legend.appendChild(div);
 
-    // {pos:{lat:37.108600,lng:-122.014000}, heading:341, alt:10050, speed:290,
-    //  icao24:"A12323", callsign:"SWA2848", t:"HH:MM:SS PDT"}
-    var flights = {{.FlightsJS}}
+    var aircraft = {{.AircraftJS}}
     var infowindow = new google.maps.InfoWindow({ content: "holding..." });
 
-    for (var i in flights) {
-        var f = flights[i]
-        var infostring = '<div><b><a target="_blank" href="'+f.url+'">'+f.callsign+'</a></b><br/>'+
-            'Icao24: '+f.icao24+'<br/>'+
-            'Altitude: '+f.alt+' feet<br/>'+
-            'Speed: '+f.speed+' knots<br/>'+
-            'Heading: '+f.heading+' degrees<br/>'+
-            'Position: ('+f.pos.lat+','+f.pos.lng+')<br/>'+
-            'Time of this trackpoint: '+f.t+'<br/>'
+    for (var i in aircraft) {
+        var a = aircraft[i]
+        var infostring = '<div><b><a target="_blank" href="'+a.url+'">'+a.callsign+'</a></b><br/>'+
+            'Icao24: '+a.icao24+'<br/>'+
+            'Altitude: '+a.alt+' feet<br/>'+
+            'Speed: '+a.speed+' knots<br/>'+
+            'Heading: '+a.heading+' degrees<br/>'+
+            'Position: ('+a.pos.lat+','+a.pos.lng+')<br/>'+
+            'Last seen: '+a.age+' seconds ago<br/>'+
+            'Receiver: '+a.receiver+'<br/>'
             '</div>';
 
         var marker = new google.maps.Marker({
-            title: f.flightnumber,
+            title: a.callsign,
             html: infostring,
-            position: f.pos,
+            position: a.pos,
             icon: {
                 path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
                 scale: 3,
                 strokeColor: '#0033ff',
                 strokeWeight: 2,
-                rotation: f.heading,
+                rotation: a.heading,
             },
             map: map
         });

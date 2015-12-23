@@ -68,7 +68,7 @@ func nowMapHandler(w http.ResponseWriter, r *http.Request) {
 
 	var params = map[string]interface{}{
 		"Legend": buildLegend(),
-		"FlightsJS": a.ToJSVar(),
+		"AircraftJS": a.ToJSVar(),
 		"MapsAPIKey": "",//kGoogleMapsAPIKey,
 		"Center": sfo.KFixes["EPICK"], //sfo.KLatlongSFO,
 		"Zoom": 8,
