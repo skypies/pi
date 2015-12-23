@@ -4,8 +4,9 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
-	
-	"google.golang.org/appengine"
+
+	"golang.org/x/net/context"
+
 	"google.golang.org/appengine/log"
 	"google.golang.org/appengine/memcache"
 )
@@ -16,9 +17,8 @@ const chunksize = 950000
 
 // Object usually too big (1MB limit), so shard.
 // http://stackoverflow.com/questions/9127982/
-func bytesToMemcacheShards(key string, b []byte) {
-	c := appengine.BackgroundContext()
-
+func bytesToMemcacheShards(c context.Context, key string, b []byte) {
+	// c := appengine.BackgroundContext()
 	items := []*memcache.Item{}
 	for i:=0; i<len(b); i+=chunksize {
 		k := fmt.Sprintf("=%d=%s",i,key)
@@ -36,9 +36,7 @@ func bytesToMemcacheShards(key string, b []byte) {
 // {{{ bytesFromMemcacheShards
 
 // bool means 'found'
-func bytesFromMemcacheShards(key string) ([]byte, bool) {
-	c := appengine.BackgroundContext()
-
+func bytesFromMemcacheShards(c context.Context, key string) ([]byte, bool) {
 	keys := []string{}
 	for i:=0; i<32; i++ { keys = append(keys, fmt.Sprintf("=%d=%s",i*chunksize,key)) }
 
@@ -89,19 +87,19 @@ func (a *Airspace)FromBytes(b []byte) error {
 
 // {{{ a.ToMemcache
 
-func (a *Airspace)ToMemcache() error {
+func (a *Airspace)ToMemcache(c context.Context) error {
 	b,err := a.ToBytes()
 	if err != nil { return err }
 
-	bytesToMemcacheShards("airspace", b)
+	bytesToMemcacheShards(c, "airspace", b)
 	return nil
 }
 
 // }}}
 // {{{ a.FromMemcache
 
-func (a *Airspace) FromMemcache() error {
-	if b,found := bytesFromMemcacheShards("airspace"); found==true {
+func (a *Airspace) FromMemcache(c context.Context) error {
+	if b,found := bytesFromMemcacheShards(c, "airspace"); found==true {
 		if err := a.FromBytes(b); err != nil {
 			return err
 		}
