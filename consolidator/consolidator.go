@@ -70,7 +70,7 @@ func main() {
 		Log.Printf("(ae context created)")
 		pubsub.Setup(Ctx, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
 	} else {
-		Ctx = pubsub.GetDevContext(fProjectName)
+		Ctx = pubsub.GetLocalContext(fProjectName)
 		Log.Printf("(dev context created)")
 		fPubsubSubscription += "DEV"
 		pubsub.Setup(Ctx, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
