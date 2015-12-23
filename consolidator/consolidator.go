@@ -55,7 +55,6 @@ func init() {
 	Log = log.New(os.Stdout,"", log.Ldate|log.Ltime)//|log.Lshortfile)
 	
 	http.HandleFunc("/", handler)
-	http.HandleFunc("/now", nowHandler)
 	http.HandleFunc("/_ah/start", startHandler)
 }
 
@@ -69,6 +68,7 @@ func main() {
 		Ctx = pubsub.GetAppEngineContext(fProjectName)
 		Log.Printf("(ae context created)")
 		pubsub.Setup(Ctx, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
+
 	} else {
 		Ctx = pubsub.GetLocalContext(fProjectName)
 		Log.Printf("(dev context created)")
@@ -99,7 +99,7 @@ func main() {
 		newMsgs := airspace.MaybeUpdate(msgs)
 
 		if fOnAppEngine {
-			airspace.ToMemcache()  // Update the memcache thing
+			airspace.ToMemcache(Ctx)  // Update the memcache thing
 		}
 		if fPubsubOutputTopic != "" {
 			// Publish newMsgs
@@ -132,18 +132,6 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		nMessages, nMessages-nNewMessages, nNewMessages,
 		time.Since(startTime), startTime,
 		lastMessage, time.Since(lastMessage), sizeAirspace, stationStr)))
-}
-
-
-func nowHandler(w http.ResponseWriter, r *http.Request) {
-	a := airspace.Airspace{}
-
-	if err := a.FromMemcache(); err != nil {
-		w.Write([]byte(fmt.Sprintf("not OK: fetch fail: %v\n", err)))
-		return
-	}
-
-	w.Write([]byte(fmt.Sprintf("OK\n * Airspace\n%s\n", a)))
 }
 
 func startHandler(w http.ResponseWriter, r *http.Request) {
