@@ -19,7 +19,7 @@ import (
 	"github.com/skypies/adsb"
 )
 
-// {{{ GetAppEngineContext, GetDevContext
+// {{{ GetAppEngineContext, GetLocalContext
 
 func wrapContext(projectName string, in context.Context) context.Context {
 	client, err := google.DefaultClient(
@@ -39,7 +39,7 @@ func GetAppEngineContext(projectName string) context.Context {
 }
 
 // cp serfr0-fdb-blahblah.json ~/.config/gcloud/application_default_credentials.json
-func GetDevContext(projectName string) context.Context {
+func GetLocalContext(projectName string) context.Context {
 	return wrapContext(projectName, context.TODO())
 }
 

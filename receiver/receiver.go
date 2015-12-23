@@ -3,9 +3,10 @@
 // build useful packets. These are then published up to a topic in Google Cloud PubSub.
 package main
 
+// cp  serfr0-fdb-blahblah.json ~/.config/gcloud/application_default_credentials.json
 // go get github.com/skypies/pi/receiver
 // go build github.com/skypies/pi/receiver
-// receiver -h northpi:30003
+// $GOPATH/bin/receiver -h northpi:30003
 
 // go run receiver.go -f ~/skypi/sbs1.out
 
@@ -39,7 +40,6 @@ func init() {
 
 	flag.StringVar(&fReceiverName, "receiver", "TestStation", "Name for this data source")
 	flag.StringVar(&fHostPort, "h", "", "host:port of dump1090-box:30003")	
-	flag.StringVar(&fJsonAuthFile, "auth", "serfr0-fdb-48c34ecd36c9.json", "The JSON auth file for a Google service worker account")
 	flag.StringVar(&fProjectName, "project", "serfr0-fdb", "Name of the Google cloud project hosting the pubsub")
 	flag.StringVar(&fPubsubTopic, "topic", "adsb-inbound", "Name of the pubsub topic to post to (short name, not projects/blah...)")
 	flag.StringVar(&fDump1090TimeLocation, "timeloc", "UTC", "Which timezone dump1090 thinks it is in")
@@ -76,7 +76,7 @@ func main() {
 
 	adsb.TimeLocation = fDump1090TimeLocation  // This is grievous
 	
-	c := pubsub.GetContext(fJsonAuthFile, fProjectName)
+	c := pubsub.GetLocalContext(fProjectName)
 	mb.FlushFunc = func(msgs []*adsb.CompositeMsg) {
 		wg.Add(1)
 		go func(msgs *[]*adsb.CompositeMsg) {
@@ -92,7 +92,6 @@ func main() {
 			Log.Print(err)
 			continue
 		}
-		//msg.ReceiverName = fReceiverName // Claim this message, for upstream fame & glory
 		mb.Add(&msg)
 
 		if err := scanner.Err(); err != nil {
