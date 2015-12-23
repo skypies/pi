@@ -40,9 +40,12 @@ func init() {
 
 	flag.StringVar(&fReceiverName, "receiver", "TestStation", "Name for this data source")
 	flag.StringVar(&fHostPort, "h", "", "host:port of dump1090-box:30003")	
-	flag.StringVar(&fProjectName, "project", "serfr0-fdb", "Name of the Google cloud project hosting the pubsub")
-	flag.StringVar(&fPubsubTopic, "topic", "adsb-inbound", "Name of the pubsub topic to post to (short name, not projects/blah...)")
-	flag.StringVar(&fDump1090TimeLocation, "timeloc", "UTC", "Which timezone dump1090 thinks it is in")
+	flag.StringVar(&fProjectName, "project", "serfr0-fdb",
+		"Name of the Google cloud project hosting the pubsub")
+	flag.StringVar(&fPubsubTopic, "topic", "adsb-inbound",
+		"Name of the pubsub topic to post to (short name, not projects/blah...)")
+	flag.StringVar(&fDump1090TimeLocation, "timeloc", "UTC",
+		"Which timezone dump1090 thinks it is in")
 	flag.Parse()
 	
 	Log = log.New(os.Stdout,"", log.Ldate|log.Ltime)//|log.Lshortfile)
@@ -72,7 +75,7 @@ func main() {
 	wg := &sync.WaitGroup{}
 	scanner := bufio.NewScanner(getIoReader())
 	mb := msgbuffer.NewMsgBuffer()
-	mb.MaxMessageAgeSeconds = 10//1000000 // Kinda screwy when reading old data from files
+	mb.MaxMessageAgeSeconds = 10 // Kinda screwy when reading old data from files
 
 	adsb.TimeLocation = fDump1090TimeLocation  // This is grievous
 	
@@ -93,7 +96,7 @@ func main() {
 			continue
 		}
 		mb.Add(&msg)
-
+		
 		if err := scanner.Err(); err != nil {
 			Log.Fatal(err)
 		}
