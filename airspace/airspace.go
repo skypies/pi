@@ -20,8 +20,8 @@ type Airspace struct {
 	//// Data for message deduping.
 	// We roll curr into prev (and lose the old prev) as per rollAfter; this is to
 	// keep the memory footprint under control.
-	currMsgs         map[adsb.MsgContent]bool
-	prevMsgs         map[adsb.MsgContent]bool
+	currMsgs         map[adsb.Signature]bool
+	prevMsgs         map[adsb.Signature]bool
 	rollAfter        time.Duration
 	timeOfLastRoll   time.Time
 
@@ -34,7 +34,7 @@ type Airspace struct {
 
 func (a *Airspace)rollMsgs() {
 	a.prevMsgs = a.currMsgs
-	a.currMsgs = make(map[adsb.MsgContent]bool)
+	a.currMsgs = make(map[adsb.Signature]bool)
 	a.timeOfLastRoll = time.Now()
 
 	// Perhaps this should happen elsewhere, but hey, here works.
@@ -54,12 +54,13 @@ func (a *Airspace)thisIsNewContent(msg *adsb.CompositeMsg) (wasNew bool) {
 	if a.rollAfter == time.Minute * 0 { a.rollAfter = DefaultRollAfter }
 	if a.Aircraft == nil { a.Aircraft = make(map[adsb.IcaoId]AircraftData) }
 	
-	if _,existsCurr := a.currMsgs[msg.MsgContent]; !existsCurr {
+	sig := msg.GetSignature()
+	if _,existsCurr := a.currMsgs[sig]; !existsCurr {
 		// Add it into Curr in all cases
-		a.currMsgs[msg.MsgContent] = true
+		a.currMsgs[sig] = true
 
 		existsPrev := false
-		if a.prevMsgs != nil { _,existsPrev = a.prevMsgs[msg.MsgContent] }
+		if a.prevMsgs != nil { _,existsPrev = a.prevMsgs[sig] }
 
 		// If the thing was already in prev, then it isn't new; else it is
 		return !existsPrev
