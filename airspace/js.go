@@ -7,12 +7,14 @@ import (
 )
 
 func (ad AircraftData)ToJSString() string {
-	m := ad.Msg
-	url := fmt.Sprintf("http://flightaware.com/live/flight/%s", m.Callsign)
+	m := ad.Msg	
+	fdbUrl := fmt.Sprintf("https://ui-dot-serfr0-fdb.appspot.com/fdb/tracks?icaoid=%s&t=%d",
+		string(m.Icao24), time.Now().Add(-30 * time.Second))
+	faUrl := fmt.Sprintf("http://flightaware.com/live/flight/%s", m.Callsign)
 	return fmt.Sprintf("receiver:\"%s\", callsign:%q, icao24:%q, pos:{lat:%.6f,lng:%.6f}, "+
-		"alt:%d, heading:%d, speed:%d, vertspeed:%d, squawk:%q, url:%q, age:%.0f",
+		"alt:%d, heading:%d, speed:%d, vertspeed:%d, squawk:%q, faurl:%q, fdburl:%q, age:%.0f",
 		m.ReceiverName, m.Callsign, m.Icao24, m.Position.Lat, m.Position.Long,
-		m.Altitude, m.Track, m.GroundSpeed, m.VerticalRate, m.Squawk, url,
+		m.Altitude, m.Track, m.GroundSpeed, m.VerticalRate, m.Squawk, faUrl, fdbUrl,
 		time.Since(m.GeneratedTimestampUTC).Seconds())
 }
 

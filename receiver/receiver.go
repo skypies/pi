@@ -20,8 +20,8 @@ import (
 	"sync"
 	
 	"github.com/skypies/adsb"
+	"github.com/skypies/adsb/msgbuffer"
 	"github.com/skypies/pi/pubsub"
-	"github.com/skypies/pi/msgbuffer"
 )
 
 var Log *log.Logger

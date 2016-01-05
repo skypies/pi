@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"time"
 
-	"google.golang.org/appengine"
-
 	"google.golang.org/cloud"
 	"google.golang.org/cloud/pubsub"
 	"golang.org/x/net/context"
@@ -19,9 +17,9 @@ import (
 	"github.com/skypies/adsb"
 )
 
-// {{{ GetAppEngineContext, GetLocalContext
+// {{{ WrapContext
 
-func wrapContext(projectName string, in context.Context) context.Context {
+func WrapContext(projectName string, in context.Context) context.Context {
 	client, err := google.DefaultClient(
     in,
     pubsub.ScopeCloudPlatform,
@@ -34,13 +32,10 @@ func wrapContext(projectName string, in context.Context) context.Context {
 	return cloud.NewContext(projectName, client)
 }
 
-func GetAppEngineContext(projectName string) context.Context {
-	return wrapContext(projectName, appengine.BackgroundContext())
-}
-
+// User by receiver; move there ? Or setup contexts ?
 // cp serfr0-fdb-blahblah.json ~/.config/gcloud/application_default_credentials.json
 func GetLocalContext(projectName string) context.Context {
-	return wrapContext(projectName, context.TODO())
+	return WrapContext(projectName, context.TODO())
 }
 
 // }}}
@@ -112,7 +107,7 @@ func PublishMsgs(c context.Context, topic,receiverName string, msgs *[]*adsb.Com
 // {{{ Pull
 
 // https://godoc.org/google.golang.org/cloud/pubsub#example-Publish
-func Pull(c context.Context, subscription string, numBundles int) (*[]*adsb.CompositeMsg, error) {
+func Pull(c context.Context, subscription string, numBundles int) ([]*adsb.CompositeMsg, error) {
 	msgs := []*adsb.CompositeMsg{}
 
 	bundles,err := pubsub.Pull(c,subscription,numBundles)
@@ -133,11 +128,10 @@ func Pull(c context.Context, subscription string, numBundles int) (*[]*adsb.Comp
 		}
 	}
 	
-	return &msgs,nil
+	return msgs,nil
 }
 
 // }}}
-
 
 // {{{ -------------------------={ E N D }=----------------------------------
 

@@ -4,10 +4,9 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
-
+	
 	"golang.org/x/net/context"
 
-	"google.golang.org/appengine/log"
 	"google.golang.org/appengine/memcache"
 )
 
@@ -17,7 +16,7 @@ const chunksize = 950000
 
 // Object usually too big (1MB limit), so shard.
 // http://stackoverflow.com/questions/9127982/
-func bytesToMemcacheShards(c context.Context, key string, b []byte) {
+func bytesToMemcacheShards(c context.Context, key string, b []byte) error {
 	// c := appengine.BackgroundContext()
 	items := []*memcache.Item{}
 	for i:=0; i<len(b); i+=chunksize {
@@ -27,9 +26,7 @@ func bytesToMemcacheShards(c context.Context, key string, b []byte) {
 		items = append(items, &memcache.Item{ Key:k , Value:b[s:e+1] }) // slice sytax is [s,e)
 	}
 
-	if err := memcache.SetMulti(c, items); err != nil {
-		log.Errorf(c, " #=== cdb sharded store fail: %v", err)
-	}
+	return memcache.SetMulti(c, items)
 }
 
 // }}}
@@ -41,7 +38,7 @@ func bytesFromMemcacheShards(c context.Context, key string) ([]byte, bool) {
 	for i:=0; i<32; i++ { keys = append(keys, fmt.Sprintf("=%d=%s",i*chunksize,key)) }
 
 	if items,err := memcache.GetMulti(c, keys); err != nil {
-		log.Errorf(c, "fdb memcache multiget: %v", err)
+		fmt.Printf("bytesFromMemcacheShards/GetMulti err: %v\n", err)
 		return nil,false
 
 	} else {
@@ -91,8 +88,7 @@ func (a *Airspace)ToMemcache(c context.Context) error {
 	b,err := a.ToBytes()
 	if err != nil { return err }
 
-	bytesToMemcacheShards(c, "airspace", b)
-	return nil
+	return bytesToMemcacheShards(c, "airspace", b)
 }
 
 // }}}

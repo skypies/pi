@@ -1,11 +1,8 @@
 package main
 
 import (
-	"errors"
-	"html/template"
 	"fmt"
 	"net/http"
-	"time"
 	
 	"google.golang.org/appengine"
 
@@ -16,25 +13,7 @@ import (
 
 var (
 	kGoogleMapsAPIKey = "AIzaSyBCNj05xH-7CAdVEXXSPpt2lGDmaynIOBU"
-
-	templates = template.Must(template.New("").Funcs(template.FuncMap{
-		"dict": templateDict,
-		"formatPdt": templateFormatPdt,
-	}).ParseGlob("templates/*"))
 )
-func templateDict(values ...interface{}) (map[string]interface{}, error) {
-	if len(values)%2 != 0 { return nil, errors.New("invalid dict call")	}
-	dict := make(map[string]interface{}, len(values)/2)
-	for i := 0; i < len(values); i+=2 {
-		key, ok := values[i].(string)
-		if !ok { return nil, errors.New("dict keys must be strings") }
-		dict[key] = values[i+1]
-	}
-	return dict, nil
-}
-func templateFormatPdt(t time.Time, format string) string {
-	return date.InPdt(t).Format(format)
-}
 
 func init() {
 	http.HandleFunc("/text", nowHandler)

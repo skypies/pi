@@ -5,6 +5,14 @@ vm: true
 manual_scaling:
   instances: 1
 
+# Default: https://cloud.google.com/appengine/docs/managed-vms/config
+# Pricing: https://cloud.google.com/compute/docs/machine-types
+# See if we can tilt from g1-small into f1-micro, and save cash
+resources:
+  cpu: .5
+  memory_gb: 0.5
+  disk_size_gb: 10
+  
 handlers:
 - url: /_ah/start
   script: _go_app

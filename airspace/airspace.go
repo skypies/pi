@@ -95,13 +95,13 @@ func (a Airspace)String() string {
 
 // If any messages are new, update our view of the world. Return the indicies of the messages
 // we thought were new.
-func (a *Airspace) MaybeUpdate(msgs *[]*adsb.CompositeMsg) []*adsb.CompositeMsg {
+func (a *Airspace) MaybeUpdate(msgs []*adsb.CompositeMsg) []*adsb.CompositeMsg {
 	ret := []*adsb.CompositeMsg{}
 
 	// Time to roll (or lazily init) ?
 	if time.Since(a.timeOfLastRoll) > a.rollAfter { a.rollMsgs() }
 
-	for _,msg := range *msgs {
+	for _,msg := range msgs {
 		if a.thisIsNewContent(msg) {
 			ret = append(ret,msg)
 			a.Aircraft[msg.Icao24] = AircraftData{Msg: msg}

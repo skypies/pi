@@ -11,7 +11,8 @@ function localOverlay() {
 
     for (var i in aircraft) {
         var a = aircraft[i]
-        var infostring = '<div><b><a target="_blank" href="'+a.url+'">'+a.callsign+'</a></b><br/>'+
+        var infostring = '<div><b><a target="_blank" href="'+a.fdburl+'">'+a.callsign+'</a></b>'+
+            '<a target="_blank" href="'+a.faurl+'">fa</a><br/>'+
             'Icao24: '+a.icao24+'<br/>'+
             'Altitude: '+a.alt+' feet<br/>'+
             'Speed: '+a.speed+' knots<br/>'+

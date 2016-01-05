@@ -50,12 +50,12 @@ func TestDeduping(t *testing.T) {
 	a := Airspace{}
 
 	msgs1 := msgs(bank1)
-	if new := a.MaybeUpdate(&msgs1); len(new) != len(msgs1) {
+	if new := a.MaybeUpdate(msgs1); len(new) != len(msgs1) {
 		t.Errorf("Initial population: expected %d new, got %d", len(msgs1), len(new))
 	}
 	
 	msgs2 := msgs(bank2)
-	if new := a.MaybeUpdate(&msgs2); len(new) != 0 {
+	if new := a.MaybeUpdate(msgs2); len(new) != 0 {
 		t.Errorf("Repopulation of init msgs: expected 0 new, got %d", len(new))
 	}
 }
@@ -64,12 +64,12 @@ func TestPartialDeduping(t *testing.T) {
 	a := Airspace{}
 
 	msgs1 := msgs(bank1)
-	if new := a.MaybeUpdate(&msgs1); len(new) != len(msgs1) {
+	if new := a.MaybeUpdate(msgs1); len(new) != len(msgs1) {
 		t.Errorf("Initial population: expected %d new, got %d", len(msgs1), len(new))
 	}
 	
 	msgs3 := msgs(bank3)
-	if new := a.MaybeUpdate(&msgs3); len(new) != 2 {
+	if new := a.MaybeUpdate(msgs3); len(new) != 2 {
 		t.Errorf("Repopulation of init msgs: expected 2 new, got %d", len(new))
 	}
 
@@ -80,13 +80,13 @@ func TestDedupingViaPrev(t *testing.T) {
 	a := Airspace{}
 
 	msgs1 := msgs(bank1)
-	if new := a.MaybeUpdate(&msgs1); len(new) != len(msgs1) {
+	if new := a.MaybeUpdate(msgs1); len(new) != len(msgs1) {
 		t.Errorf("Initial population: expected %d new, got %d", len(msgs1), len(new))
 	}
 
 	a.rollMsgs()
 	
-	if new := a.MaybeUpdate(&msgs1); len(new) != 0 {
+	if new := a.MaybeUpdate(msgs1); len(new) != 0 {
 		t.Errorf("Repopulation of init msgs: expected 0 new, got %d", len(new))
 	}
 }
@@ -96,14 +96,14 @@ func TestCompleteAgeout(t *testing.T) {
 	a := Airspace{}
 
 	msgs1 := msgs(bank1)
-	if new := a.MaybeUpdate(&msgs1); len(new) != len(msgs1) {
+	if new := a.MaybeUpdate(msgs1); len(new) != len(msgs1) {
 		t.Errorf("Initial population: expected %d new, got %d", len(msgs1), len(new))
 	}
 
 	a.rollMsgs()
 	a.rollMsgs()
 	
-	if new := a.MaybeUpdate(&msgs1); len(new) != len(msgs1) {
+	if new := a.MaybeUpdate(msgs1); len(new) != len(msgs1) {
 		t.Errorf("Repopulation of init msgs: expected %d new, got %d", len(msgs1), len(new))
 	}
 }
