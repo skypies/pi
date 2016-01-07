@@ -31,11 +31,10 @@ import (
 
 	"github.com/skypies/adsb"
 	"github.com/skypies/adsb/trackbuffer"
-	"github.com/skypies/pi/airspace"
-	"github.com/skypies/pi/pubsub"
-
 	fdb "github.com/skypies/flightdb2"
 	"github.com/skypies/flightdb2/fgae"
+	"github.com/skypies/pi/airspace"
+	"github.com/skypies/util/pubsub"
 )
 
 // {{{ globals
@@ -154,10 +153,10 @@ func storeMessagesByAircraftMainloop(msgChan chan MsgChanItem) {
 	tb := trackbuffer.NewTrackBuffer()
 	
 	flushFunc := func(msgs []*adsb.CompositeMsg) {		
-		for i,m := range msgs {
+		/*for i,m := range msgs {
 			fmt.Printf(" [%2d] %s\n", i, m)
-		}
-		fmt.Printf(" --\n")
+		}*/
+		fmt.Printf(" -- (%d pushed for %s)\n", len(msgs), string(msgs[0].Icao24))
 	}
 
 	if fTrackPostURL != "" {

@@ -36,6 +36,7 @@ var fPubsubTopic           string
 var fReceiverName          string
 var fDump1090TimeLocation  string
 var fBufferMaxAgeSeconds   int64
+var fVerbose               int
 
 func init() {
 	flag.StringVar(&fFilename, "f", "", "sbs formatted CSV file thing to read")
@@ -51,7 +52,8 @@ func init() {
 
 	flag.Int64Var(&fBufferMaxAgeSeconds, "maxage", 10,
 		"How many seconds we wait before shipping a batch of messages out to pubsub")
-
+	flag.IntVar(&fVerbose, "v", 0, "how verbose to get")
+	
 	flag.Parse()
 	
 	Log = log.New(os.Stdout,"", log.Ldate|log.Ltime)//|log.Lshortfile)
@@ -94,12 +96,16 @@ func main() {
 	mb.FlushFunc = func(msgs []*adsb.CompositeMsg) {
 		wg.Add(1)
 		go func(msgs []*adsb.CompositeMsg) {
+			if fVerbose > 0 {
+				Log.Printf("-- fushing %d msgs\n", len(msgs))
+				if fVerbose > 1 {
+					for i,m := range msgs {
+						Log.Printf(" [%2d] %s\n", i, m)
+					}
+				}
 			if fPubsubTopic != "" {
 				pubsub.PublishMsgs(c, fPubsubTopic, fReceiverName, msgs)
 			} else {
-				for i,m := range msgs {
-					Log.Printf(" [%2d] %s\n", i, m)
-				}
 			}
 			wg.Done()
 		}(msgs)

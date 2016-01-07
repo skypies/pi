@@ -14,6 +14,10 @@ var DefaultMaxQuietTime = time.Minute * 5
 
 type AircraftData struct {
 	Msg *adsb.CompositeMsg
+
+	// These fields might get populated via an airframe lookup
+	Registration string
+	EquipmentType string
 }
 
 type Airspace struct {
@@ -82,8 +86,8 @@ func (a Airspace)String() string {
 	
 	for _,k := range keys {
 		ac := a.Aircraft[adsb.IcaoId(k)]
-		str += fmt.Sprintf(" %7.7s/%s (lastSeen:%7.1fs) : %6dft, %4dknots\n",
-			ac.Msg.Callsign, ac.Msg.Icao24,
+		str += fmt.Sprintf(" %7.7s/%s/%s (lastSeen:%7.1fs) : %6dft, %4dknots\n",
+			ac.Msg.Callsign, ac.Msg.Icao24, ac.Registration,
 			time.Since(ac.Msg.GeneratedTimestampUTC).Seconds(),
 			ac.Msg.Altitude, ac.Msg.GroundSpeed)
 	}

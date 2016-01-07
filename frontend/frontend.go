@@ -1,29 +1,57 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 	
+	"golang.org/x/net/context"
 	"google.golang.org/appengine"
 
 	"github.com/skypies/date"
 	"github.com/skypies/geo/sfo"
 	"github.com/skypies/pi/airspace"
-)
 
-var (
-	kGoogleMapsAPIKey = "AIzaSyBCNj05xH-7CAdVEXXSPpt2lGDmaynIOBU"
+	"github.com/skypies/flightdb2/ref"
 )
 
 func init() {
 	http.HandleFunc("/text", nowHandler)
+	http.HandleFunc("/json", nowJsonHandler)
 	http.HandleFunc("/", nowMapHandler)
+}
+
+var(
+	kMaxStaleDuration = time.Second * 30
+)
+
+// We tart it up with airframe data, and trim out stale entries
+func getAirspaceForDisplay(c context.Context) (airspace.Airspace, error) {
+	a := airspace.Airspace{}
+	if err := a.FromMemcache(c); err != nil {
+		return a,err
+	}
+
+	airframes := ref.NewAirframeCache(c)
+	for k,aircraft := range a.Aircraft {
+		age := time.Since(a.Aircraft[k].Msg.GeneratedTimestampUTC)
+		if age > kMaxStaleDuration {
+			delete(a.Aircraft, k)
+		} else if af := airframes.Get(string(k)); af != nil {
+			aircraft.Registration = af.Registration
+			aircraft.EquipmentType = af.EquipmentType
+			a.Aircraft[k] = aircraft
+		}
+	}
+
+	return a,nil
 }
 
 func nowHandler(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-	a := airspace.Airspace{}
-	if err := a.FromMemcache(c); err != nil {
+	a,err := getAirspaceForDisplay(c)
+	if err != nil {
 		w.Write([]byte(fmt.Sprintf("not OK: fetch fail: %v\n", err)))
 		return
 	}
@@ -37,24 +65,42 @@ func buildLegend() string {
 	return legend
 }
 
-func nowMapHandler(w http.ResponseWriter, r *http.Request) {
+func nowJsonHandler(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-	a := airspace.Airspace{}
-	if err := a.FromMemcache(c); err != nil {
+
+	a,err := getAirspaceForDisplay(c)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	data,err := json.Marshal(a)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
+}
+
+func nowMapHandler(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)
+	a,err := getAirspaceForDisplay(c)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
 	var params = map[string]interface{}{
 		"Legend": buildLegend(),
 		"AircraftJS": a.ToJSVar(),
-		"MapsAPIKey": "",//kGoogleMapsAPIKey,
-		"Center": sfo.KFixes["EPICK"], //sfo.KLatlongSFO,
+		"MapsAPIKey": "",
+		"Center": sfo.KFixes["EPICK"],
 		"Zoom": 8,
 	}
 
-	templateName := "airspace-map"		
-	if err := templates.ExecuteTemplate(w, templateName, params); err != nil {
+	if err := templates.ExecuteTemplate(w, "airspace-map", params); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
