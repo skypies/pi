@@ -18,22 +18,24 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 	
 	"github.com/skypies/adsb"
 	"github.com/skypies/adsb/msgbuffer"
-	"github.com/skypies/pi/pubsub"
+	"github.com/skypies/util/pubsub"
 )
 
 var Log *log.Logger
 
 var fFilename              string
 
-var fReceiverName          string
 var fHostPort              string
-var fJsonAuthFile          string
 var fProjectName           string
 var fPubsubTopic           string
+
+var fReceiverName          string
 var fDump1090TimeLocation  string
+var fBufferMaxAgeSeconds   int64
 
 func init() {
 	flag.StringVar(&fFilename, "f", "", "sbs formatted CSV file thing to read")
@@ -45,10 +47,19 @@ func init() {
 	flag.StringVar(&fPubsubTopic, "topic", "adsb-inbound",
 		"Name of the pubsub topic to post to (short name, not projects/blah...)")
 	flag.StringVar(&fDump1090TimeLocation, "timeloc", "UTC",
-		"Which timezone dump1090 thinks it is in")
+		"Which timezone dump1090 thinks it is in (e.g. America/Los_Angeles)")
+
+	flag.Int64Var(&fBufferMaxAgeSeconds, "maxage", 10,
+		"How many seconds we wait before shipping a batch of messages out to pubsub")
+
 	flag.Parse()
 	
 	Log = log.New(os.Stdout,"", log.Ldate|log.Ltime)//|log.Lshortfile)
+	
+	Log.Printf("(max message age is %d seconds)\n", fBufferMaxAgeSeconds)
+	if fPubsubTopic == "" {
+		Log.Printf("(no topic defined, in dry-run mode)\n")
+	}
 }
 
 func getIoReader() io.Reader {
@@ -75,17 +86,23 @@ func main() {
 	wg := &sync.WaitGroup{}
 	scanner := bufio.NewScanner(getIoReader())
 	mb := msgbuffer.NewMsgBuffer()
-	mb.MaxMessageAgeSeconds = 10 // Kinda screwy when reading old data from files
 
-	adsb.TimeLocation = fDump1090TimeLocation  // This is grievous
+	mb.MaxMessageAgeSeconds = fBufferMaxAgeSeconds // Not applicable when reading from files
+	adsb.TimeLocation = fDump1090TimeLocation  // We should really autodetect this, somehow
 	
 	c := pubsub.GetLocalContext(fProjectName)
 	mb.FlushFunc = func(msgs []*adsb.CompositeMsg) {
 		wg.Add(1)
-		go func(msgs *[]*adsb.CompositeMsg) {
-			pubsub.PublishMsgs(c, fPubsubTopic, fReceiverName, msgs)
+		go func(msgs []*adsb.CompositeMsg) {
+			if fPubsubTopic != "" {
+				pubsub.PublishMsgs(c, fPubsubTopic, fReceiverName, msgs)
+			} else {
+				for i,m := range msgs {
+					Log.Printf(" [%2d] %s\n", i, m)
+				}
+			}
 			wg.Done()
-		}(&msgs)
+		}(msgs)
 	}
 	
 	for scanner.Scan() {
@@ -96,6 +113,12 @@ func main() {
 			continue
 		}
 		mb.Add(&msg)
+
+		offset := time.Since(msg.GeneratedTimestampUTC)
+		if offset > time.Minute * 30 || offset < time.Minute * -30 {
+			Log.Fatalf("do you need to set -timeloc ?\nNow = %s\nmsg = %s\n", time.Now(),
+				msg.GeneratedTimestampUTC)
+		}
 		
 		if err := scanner.Err(); err != nil {
 			Log.Fatal(err)
