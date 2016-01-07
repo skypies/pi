@@ -103,9 +103,9 @@ func main() {
 						Log.Printf(" [%2d] %s\n", i, m)
 					}
 				}
+			}
 			if fPubsubTopic != "" {
 				pubsub.PublishMsgs(c, fPubsubTopic, fReceiverName, msgs)
-			} else {
 			}
 			wg.Done()
 		}(msgs)
