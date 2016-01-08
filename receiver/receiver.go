@@ -6,7 +6,8 @@ package main
 // cp  serfr0-fdb-blahblah.json ~/.config/gcloud/application_default_credentials.json
 // go get github.com/skypies/pi/receiver
 // go build github.com/skypies/pi/receiver
-// $GOPATH/bin/receiver -h northpi:30003
+// $GOPATH/bin/receiver -h northpi:30003 -receiver="MyStationName"
+// ... maybe also:  -maxage=4 -timeloc="America/Los_angeles"
 
 // go run receiver.go -f ~/skypi/sbs1.out
 
@@ -86,7 +87,7 @@ func getIoReader() io.Reader {
 
 func main() {
 	wg := &sync.WaitGroup{}
-	scanner := bufio.NewScanner(getIoReader())
+
 	mb := msgbuffer.NewMsgBuffer()
 
 	mb.MaxMessageAgeSeconds = fBufferMaxAgeSeconds // Not applicable when reading from files
@@ -97,7 +98,7 @@ func main() {
 		wg.Add(1)
 		go func(msgs []*adsb.CompositeMsg) {
 			if fVerbose > 0 {
-				Log.Printf("-- fushing %d msgs\n", len(msgs))
+				Log.Printf("-- flushing %d msgs\n", len(msgs))
 				if fVerbose > 1 {
 					for i,m := range msgs {
 						Log.Printf(" [%2d] %s\n", i, m)
@@ -110,25 +111,33 @@ func main() {
 			wg.Done()
 		}(msgs)
 	}
-	
-	for scanner.Scan() {
-		msg := adsb.Msg{}
-		text := scanner.Text()
-		if err := msg.FromSBS1(text); err != nil {
-			Log.Print(err)
-			continue
-		}
-		mb.Add(&msg)
 
-		offset := time.Since(msg.GeneratedTimestampUTC)
-		if offset > time.Minute * 30 || offset < time.Minute * -30 {
-			Log.Fatalf("do you need to set -timeloc ?\nNow = %s\nmsg = %s\n", time.Now(),
-				msg.GeneratedTimestampUTC)
+outerLoop:
+	for {
+		scanner := bufio.NewScanner(getIoReader())
+		for scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				Log.Printf("scanner err (will retry): %v\n", err)
+				time.Sleep(time.Second * 10)
+				continue outerLoop
+			}
+
+			msg := adsb.Msg{}
+			text := scanner.Text()
+			if err := msg.FromSBS1(text); err != nil {
+				Log.Printf("SBS parse fail '%v', input:%q", err, text)
+				continue
+			}
+			mb.Add(&msg)
+
+			offset := time.Since(msg.GeneratedTimestampUTC)
+			if offset > time.Minute * 30 || offset < time.Minute * -30 {
+				Log.Fatalf("do you need to set -timeloc ?\nNow = %s\nmsg = %s\n", time.Now(),
+					msg.GeneratedTimestampUTC)
+			}
 		}
-		
-		if err := scanner.Err(); err != nil {
-			Log.Fatal(err)
-		}
+		Log.Print("Scanner died, starting another in 5s ...")
+		time.Sleep(time.Second * 5)
 	}
 
 	mb.FinalFlush()
