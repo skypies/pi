@@ -340,20 +340,9 @@ func pullNewFromPubsub(suppliedCtx context.Context, msgsOut chan<- []*adsb.Compo
 // }}}
 // {{{ bufferTracks
 
-func bufferTracks(c context.Context, msgsIn <-chan []*adsb.CompositeMsg) {	
-	flushFunc := flushTrackToDatastore
-	if !fOnAppEngine {
-		if fTrackPostURL != "" {
-			flushFunc = flushTrackToPOST
-		} else {
-			flushFunc = func(msgs []*adsb.CompositeMsg) {		
-				// for i,m := range msgs { fmt.Printf(" [%2d] %s\n", i, m) }
-				fmt.Printf(" -- (%d pushed for %s)\n", len(msgs), string(msgs[0].Icao24))
-			}
-		}
-	}
-
-	// Our primary piece of state !
+func bufferTracks(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*adsb.CompositeMsg) {	
+	// Our primary piece of state ! It groups msgs into tracks for distinct aircraft, and
+	// then flushes out individual tracks as/when they have data older than MaxAge
 	tb := trackbuffer.NewTrackBuffer()
 	//tb.MaxAge = time.Second*300
 
@@ -365,13 +354,35 @@ func bufferTracks(c context.Context, msgsIn <-chan []*adsb.CompositeMsg) {
 			for _,m := range msgs {
 				tb.AddMessage(m)
 			}
-			tb.Flush(flushFunc)
+			tb.Flush(msgsOut)
 			//if fPubsubOutputTopic != "" {}
 		}
 			
 		if weAreDone() { break }
 	}
 	Log.Printf(" -- bufferTracks clean exit\n")
+}
+
+// }}}
+// {{{ flushTracks
+
+func flushTracks(msgsIn <-chan []*adsb.CompositeMsg) {	
+	for {
+		select {
+		case <-time.After(time.Second):
+		case msgs := <-msgsIn:
+			if fOnAppEngine {
+				flushTrackToDatastore(msgs)
+			} else if fTrackPostURL != "" {
+				flushTrackToPOST(msgs)
+			} else {
+				fmt.Printf(" -- (%d pushed for %s)\n", len(msgs), string(msgs[0].Icao24))
+			}
+		}
+			
+		if weAreDone() { break }
+	}
+	Log.Printf(" -- flushTracks clean exit\n")
 }
 
 // }}}
@@ -400,10 +411,12 @@ func main() {
 		ctx = appengine.BackgroundContext()
 	}
 
-	// Do all the work (get new messages from pubsub; buffer up tracks) in a two-step pipeline
-	msgChan := make(chan []*adsb.CompositeMsg, 3)
-	go pullNewFromPubsub(ctx, msgChan)
-	go bufferTracks(ctx, msgChan)
+	// Do all the work (get messages from pubsub; buffer tracks; push tracks) in a three-step pipeline
+	msgChan1 := make(chan []*adsb.CompositeMsg, 3)
+	msgChan2 := make(chan []*adsb.CompositeMsg, 3)
+	go pullNewFromPubsub(ctx, msgChan1)
+	go bufferTracks(msgChan1, msgChan2)
+	go flushTracks(msgChan2)
 
 	// Manage vital statistics in a thread safe way
 	go trackVitals()
@@ -416,7 +429,7 @@ func main() {
 
 		// Block until done channel lights up
 		<-done
-		time.Sleep(time.Second * 2)
+		time.Sleep(time.Second * 4)
 		Log.Printf("(main clean exit)\n")
 	}
 }
