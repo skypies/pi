@@ -18,6 +18,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"sync"
 	"time"
 	
@@ -63,6 +64,29 @@ func init() {
 	if fPubsubTopic == "" {
 		Log.Printf("(no topic defined, in dry-run mode)\n")
 	}
+
+	addSIGINTHandler()
+}
+
+var done = make(chan struct{}) // Gets closed when everything is done
+func weAreDone() bool {
+	select{
+	case <-done:
+		return true
+	default:
+		return false
+	}
+}
+
+func addSIGINTHandler() {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+
+	go func(sig <-chan os.Signal){
+		<-sig
+		Log.Printf("(SIGINT received)\n")
+		close(done)
+	}(c)
 }
 
 func getIoReader() io.Reader {
@@ -85,17 +109,14 @@ func getIoReader() io.Reader {
 	}
 }
 
-func main() {
+
+func publishMsgBundles(ch <-chan []*adsb.CompositeMsg) {
+	c := pubsub.GetLocalContext(fProjectName)
 	wg := &sync.WaitGroup{}
 
-	mb := msgbuffer.NewMsgBuffer()
-
-	mb.MaxMessageAgeSeconds = fBufferMaxAgeSeconds // Not applicable when reading from files
-	adsb.TimeLocation = fDump1090TimeLocation  // We should really autodetect this, somehow
-	
-	c := pubsub.GetLocalContext(fProjectName)
-	mb.FlushFunc = func(msgs []*adsb.CompositeMsg) {
+	for msgs := range ch {
 		wg.Add(1)
+
 		go func(msgs []*adsb.CompositeMsg) {
 			if fVerbose > 0 {
 				Log.Printf("-- flushing %d msgs\n", len(msgs))
@@ -110,7 +131,24 @@ func main() {
 			}
 			wg.Done()
 		}(msgs)
+		
+		if weAreDone() { break }
 	}
+
+	wg.Wait()
+	Log.Printf(" -- publishMsgBundles, clean shutdown\n")
+}
+
+func main() {
+	adsb.TimeLocation = fDump1090TimeLocation  // We should really autodetect this, somehow
+
+	// The message buffer will flush out bundles of messages to this channel
+	ch := make(chan []*adsb.CompositeMsg, 3)
+	go publishMsgBundles(ch)
+
+	mb := msgbuffer.NewMsgBuffer()
+	mb.FlushChannel = ch
+	mb.MaxMessageAgeSeconds = fBufferMaxAgeSeconds // Not applicable when reading from files
 
 outerLoop:
 	for {
@@ -135,12 +173,13 @@ outerLoop:
 				Log.Fatalf("do you need to set -timeloc ?\nNow = %s\nmsg = %s\n", time.Now(),
 					msg.GeneratedTimestampUTC)
 			}
+			if weAreDone() { break outerLoop}
 		}
 		Log.Print("Scanner died, starting another in 5s ...")
 		time.Sleep(time.Second * 5)
 	}
 
 	mb.FinalFlush()
-	wg.Wait()
+	time.Sleep(5 * time.Second)
 	Log.Print("Final clean shutdown")
 }
