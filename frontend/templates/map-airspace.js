@@ -14,8 +14,9 @@ function localOverlay() {
         var infostring = '<div><b><a target="_blank" href="'+a.fdburl+'">'+a.callsign+'</a></b>, ['+
             '<a target="_blank" href="'+a.faurl+'">fa</a>]<br/>'+
             'Icao24: '+a.icao24+'<br/>'+
-            'Registration: '+a.reg+'<br/>'+
-            'Equipment: '+a.equip+'<br/>'+
+            ' - Registration: '+a.reg+'<br/>'+
+            ' - IcaoPrefix: '+a.icao+'<br/>'+
+            ' - Equipment: '+a.equip+'<br/>'+
             'Altitude: '+a.alt+' feet<br/>'+
             'Speed: '+a.speed+' knots<br/>'+
             'Heading: '+a.heading+' degrees<br/>'+

@@ -11,9 +11,9 @@
 // You can it also run it locally, without interfering with the prod subscriptions:
 //   $ go run consolidator.go -ae=false
 
-// TODO: proper shutdown (incl. serialization of airspace deduping buffers into datastore)
-
 package main
+
+// {{{ import()
 
 import (
 	"io/ioutil"
@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"net/http"
 	"net/url"
 	"time"
@@ -37,7 +38,8 @@ import (
 	"github.com/skypies/util/pubsub"
 )
 
-// {{{ globals
+// }}}
+// {{{ var()
 
 var (
 	// Command line flags
@@ -49,19 +51,10 @@ var (
 	fTrackPostURL          string
 	
 	Log                   *log.Logger
-
-	// Junky globals for basic status check
-	startTime time.Time
-	sizeAirspace int
-	stringAirspace string
-	nMessages int
-	nNewMessages int
-	lastMessage time.Time
-	receivers map[string]int
-	receiversLastSeen map[string]time.Time
 )
 
 // }}}
+
 // {{{ init
 
 func init() {
@@ -75,41 +68,41 @@ func init() {
 		"Name of the pubsub subscription on the adsb-inbound topic")
 	flag.StringVar(&fPubsubOutputTopic, "output", "adsb-consolidated",
 		"Name of the pubsub topic to post deduped output on (short name, not projects/blah...)")
-	flag.StringVar(&fTrackPostURL, "trackpost", "http://localhost:8080/fdb/add-frag", "test only")
+	flag.StringVar(&fTrackPostURL, "trackpost", "", "e.g. http://localhost:8080/fdb/add-frag")
 	flag.BoolVar(&fOnAppEngine, "ae", true, "on appengine (use http://metadata/ etc)")
 	flag.Parse()
+
+	http.HandleFunc("/", statsHandler)
+	http.HandleFunc("/_ah/start", startHandler)
+	http.HandleFunc("/_ah/stop", stopHandler)
+
+	addSIGINTHandler()
 }
 
 // }}}
 // {{{ setup
 
 // Can't call this until we've got some kind of context
-func setup(ctx context.Context) {
-	// Init hacky stats globals
-	startTime = time.Now()
-	receivers = map[string]int{}
-	receiversLastSeen = map[string]time.Time{}
-	
+func setup(ctx context.Context) {	
 	if fOnAppEngine {
 		pubsub.Setup(ctx, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
 	} else {
 		fPubsubSubscription += "DEV"
 		pubsub.Setup(ctx, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
-		pubsub.PurgeSub(ctx, fPubsubSubscription, "adsb-inbound")
+		pubsub.DeleteSub(ctx, fPubsubSubscription)
+		pubsub.CreateSub(ctx, fPubsubSubscription, "adsb-inbound")
 	}
 
-	http.HandleFunc("/", statsHandler)
-	http.HandleFunc("/_ah/start", startHandler)
-	http.HandleFunc("/_ah/stop", stopHandler)
 	Log.Printf("(setup)\n")
 }
 
 // }}}
+
 // {{{ flushTrackToPOST
 
 func flushTrackToPOST(msgs []*adsb.CompositeMsg) {
 	if len(msgs) == 0 {
-		fmt.Printf("No messages to post!\n")
+		Log.Printf("No messages to post!\n")
 		return
 	}
 	
@@ -117,12 +110,12 @@ func flushTrackToPOST(msgs []*adsb.CompositeMsg) {
 	debugUrl := fTrackPostURL + "?callsign=" + msgs[0].Callsign
 	resp,err := http.PostForm(debugUrl, url.Values{ "msgs": {msgsBase64} })
 	if err != nil {
-		fmt.Printf("flushPost/POST: %v\n", err)
+		Log.Printf("flushPost/POST: %v\n", err)
 		return
 	}
 
 	body,_ := ioutil.ReadAll(resp.Body)		
-	fmt.Printf(" ------------> %s",body)
+	Log.Printf(" ------------> %s",body)
 	//defer resp.Body.Close()
 }
 
@@ -137,65 +130,157 @@ func flushTrackToDatastore(msgs []*adsb.CompositeMsg) {
 	db := fgae.FlightDB{C:appengine.BackgroundContext()}
 
 	if err := db.AddADSBTrackFragment(frag); err != nil {
-		fmt.Printf("flushPost/ToDatastore: %v\n", err)
+		Log.Printf("flushPost/ToDatastore: %v\n", err)
 	}
 }
 
 // }}}
 
-// {{{ storeMessagesByAircraftMainloop
+// {{{ startHandler
 
-type MsgChanItem struct {
-	msgs []*adsb.CompositeMsg
+func startHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Printf("(startHandler)\n")
+	w.Write([]byte("OK"))	
 }
 
-func storeMessagesByAircraftMainloop(msgChan chan MsgChanItem) {
-	tb := trackbuffer.NewTrackBuffer()
-	
-	flushFunc := func(msgs []*adsb.CompositeMsg) {		
-		/*for i,m := range msgs {
-			fmt.Printf(" [%2d] %s\n", i, m)
-		}*/
-		fmt.Printf(" -- (%d pushed for %s)\n", len(msgs), string(msgs[0].Icao24))
-	}
+// }}}
+// {{{ stopHandler
 
-	if fTrackPostURL != "" {
-		flushFunc = flushTrackToPOST
-	}
+func stopHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Printf("(stopHandler)\n")
+	close(done) // Shut down the pubsub goroutine (which should save airspace into datastore.)
+	w.Write([]byte("OK"))	
+}
 
-	if fOnAppEngine {
-		flushFunc = flushTrackToDatastore
-	}
+// When running a local instance ...
+func addSIGINTHandler() {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+
+	go func(sig <-chan os.Signal){
+		<-sig
+		Log.Printf("(SIGINT received)\n")
+		close(done)
+	}(c)
+}
+
+// }}}
+// {{{ statsHandler
+
+func statsHandler(w http.ResponseWriter, r *http.Request) {
+	vitalsRequestChan<- VitalsRequest{Name:"_output"}
+	str := <-vitalsResponseChan
+	w.Write([]byte(fmt.Sprintf("OK\n%s", str)))
+}
+
+// }}}
+
+// {{{ trackVitals
+
+// These two channels are accessible from all goroutines
+var vitalsRequestChan = make(chan VitalsRequest, 40)
+var vitalsResponseChan = make(chan string, 5)  // Only used for stats output
+
+type VitalsRequest struct {
+	Name      string  // _output, _reset, or _update
+	Str,Str2  string
+	I,J,K     int64
+	T         time.Time
+}
+
+type ReceiverSummary struct {
+	NumMessagesSent int64
+	NumBundlesSent  int64
+	LastBundleTime  time.Time
+}
+
+func trackVitals() {
+	startupTime := time.Now().Round(time.Second)
+	strings := map[string]string{}
+	counters := map[string]int64{}
+	receivers := map[string]ReceiverSummary{}
 	
-	for item := range msgChan {
-		for _,m := range item.msgs {
-			tb.AddMessage(m)
+	for {
+		if weAreDone() { return }
+
+		select {
+		case req := <-vitalsRequestChan:
+
+			if req.Name == "_reset" {
+				counters = map[string]int64{}
+				receivers = map[string]ReceiverSummary{}
+
+			} else if req.Name == "_update" {
+				// This represents "we received a bundle", and we update according to the LastMsg
+				s := receivers[req.Str]
+				s.NumBundlesSent += 1
+				s.NumMessagesSent += req.I
+				s.LastBundleTime = req.T
+				receivers[req.Str] = s
+				counters["nBundles"] += 1
+				counters["nAll"] += req.I
+				counters["nNew"] += req.J
+				counters["nDupes"] += (req.I - req.J)
+				strings["airspaceSize"] = fmt.Sprintf("%d", req.K)
+				strings["airspaceText"] = req.Str2
+
+			} else if req.Name == "_output" {
+				rcvrs := ""
+				for k,v := range receivers {
+					rcvrs += fmt.Sprintf(
+						"    %-20.20s: %7d msgs (%7d bundles) (last update: %.1f seconds ago)\n",
+						k, v.NumMessagesSent, v.NumBundlesSent, time.Since(v.LastBundleTime).Seconds())
+				}
+				str := fmt.Sprintf(
+						"* %d messages received (%d dupes; %d messages in total; %d bundles)\n"+
+						"* Uptime: %s (started %s)\n"+
+						"* Preload: %s\n"+
+						"\n"+
+						"* Receivers:-\n%s\n"+
+						"* Airspace (%s bytes, incl. deduping):-\n%s\n",
+					counters["nNew"], counters["nDupes"], counters["nAll"], counters["nBundles"],
+					time.Second * time.Duration(int(time.Since(startupTime).Seconds())), startupTime,
+					strings["loadedOnStartup"],
+					rcvrs, strings["airspaceSize"], strings["airspaceText"])
+
+				vitalsResponseChan <- str
+
+			} else if req.Name != "" {
+				if req.Str != "" { strings[req.Name] = req.Str }
+			}
 		}
-		
-		tb.Flush(flushFunc)
-
-		//if fPubsubOutputTopic != "" {}
 	}
 }
 
 // }}}
-// {{{ getMessagesMainloop
+// {{{ pullNewFromPubsub
 
-func getMessagesMainloop(suppliedCtx context.Context) {
-	Log.Printf("(getMessages starting)")
-
+func pullNewFromPubsub(suppliedCtx context.Context, msgsOut chan<- []*adsb.CompositeMsg) {
 	// Be careful about contexts. For memcache, we need 'an App Engine context', which is what
 	// we're passed in. For pubsub, we need to derive a 'Cloud context' (this derived context is
 	// no longer considered 'an App Engine context').
 	memcacheCtx := suppliedCtx
 	pubsubCtx := pubsub.WrapContext(fProjectName, suppliedCtx)
 	setup(pubsubCtx)
-	
-	airspace := airspace.Airspace{}
-	msgChan := make(chan MsgChanItem, 3)
-	go storeMessagesByAircraftMainloop(msgChan)
 
+	// Setup our primary piece of state: the airspace. Load it from last time if we can.
+	as := airspace.Airspace{}
+	if fOnAppEngine {
+		loadedOnStartup := ""
+		if err := as.EverythingFromMemcache(memcacheCtx); err != nil {
+			Log.Printf("airspace.EverythingFromMemcache: %v", err)
+			loadedOnStartup = fmt.Sprintf("error loading: %v", err)
+			as = airspace.Airspace{}
+		} else {
+			loadedOnStartup = fmt.Sprintf("loaded curr=%d (prev=%d), aircraft=%d",
+				len(as.Signatures.CurrMsgs),len(as.Signatures.PrevMsgs),
+				len(as.Aircraft))
+		}
+		vitalsRequestChan<- VitalsRequest{Name: "loadedOnStartup", Str:loadedOnStartup}
+	}
+	
 	for {
+		if weAreDone() { break }
 		msgs,err := pubsub.Pull(pubsubCtx, fPubsubSubscription, 10)
 		if err != nil {
 			Log.Printf("Pull/sub=%s: err: %s", fPubsubSubscription, err)
@@ -207,39 +292,101 @@ func getMessagesMainloop(suppliedCtx context.Context) {
 			continue
 		}
 
-		newMsgs := airspace.MaybeUpdate(msgs)
+		newMsgs := as.MaybeUpdate(msgs)
 
-		// Update crappy globals
-		nMessages += len(msgs)
-		nNewMessages += len(newMsgs)
-		lastMessage = time.Now()
-		if b,err := airspace.ToBytes(); err == nil { sizeAirspace = len(b) }
-		stringAirspace = airspace.String()
-		for _,m := range msgs { receivers[m.ReceiverName]++ }
-		receiversLastSeen[msgs[0].ReceiverName] = time.Now()
-
-		// Update the memcache, and send them off down the channel
+		// Update our vital stats, with the bundle
+		airspaceBytes,_ := as.ToBytes()
+		vitalsRequestChan<- VitalsRequest{
+			Name: "_update",
+			Str:msgs[0].ReceiverName,
+			I:int64(len(msgs)),
+			J:int64(len(newMsgs)),
+			Str2: as.String(),
+			K: int64(len(airspaceBytes)),
+			T: msgs[len(msgs)-1].GeneratedTimestampUTC,
+		}
+		
 		if len(newMsgs) > 0 {
+			// Pass them to the other goroutine for dissemination, and get back to business.
+			msgsOut <- newMsgs
+
 			if fOnAppEngine {
-				if err := airspace.ToMemcache(memcacheCtx); err != nil {
-					Log.Printf("main/ToMemcache: err: %v", err)
+				if err := as.JustAircraftToMemcache(memcacheCtx); err != nil {
+					Log.Printf("main/JustAircraftToMemcache: err: %v", err)
 				}
 			} else {
 				Log.Printf("- %2d were new (%2d already seen) - %s",
 					len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
 			}
-
-			// Pass them to the other goroutine for dissemination, and get back to busines.
-			msgChan <- MsgChanItem{msgs: newMsgs}
 		}
 	}
 
-	Log.Printf("Final clean shutdown")
+	if fOnAppEngine {
+		// We're shutting down, so save all the deduping signatures
+		if err := as.EverythingToMemcache(memcacheCtx); err != nil {
+			Log.Printf(" -- pullNewFromPubsub clean exit; memcache: %v", err)
+		}
+
+	} else {
+		// We're not on AppEngine; this is a wasteful subscription
+		if err := pubsub.DeleteSub(pubsubCtx, fPubsubSubscription); err != nil {
+			Log.Printf(" -- pullNewFromPubsub clean exit; del '%s': %v", fPubsubSubscription, err)
+		}			
+	}
+	
+	Log.Printf(" -- pullNewFromPubsub clean exit\n")
+}
+
+// }}}
+// {{{ bufferTracks
+
+func bufferTracks(c context.Context, msgsIn <-chan []*adsb.CompositeMsg) {	
+	flushFunc := flushTrackToDatastore
+	if !fOnAppEngine {
+		if fTrackPostURL != "" {
+			flushFunc = flushTrackToPOST
+		} else {
+			flushFunc = func(msgs []*adsb.CompositeMsg) {		
+				// for i,m := range msgs { fmt.Printf(" [%2d] %s\n", i, m) }
+				fmt.Printf(" -- (%d pushed for %s)\n", len(msgs), string(msgs[0].Icao24))
+			}
+		}
+	}
+
+	// Our primary piece of state !
+	tb := trackbuffer.NewTrackBuffer()
+	//tb.MaxAge = time.Second*300
+
+	for {
+		select {
+		case <-time.After(time.Second):
+		case msgs := <-msgsIn:
+			//Log.Printf("buffertracks: received %d msgs\n", len(msgs))
+			for _,m := range msgs {
+				tb.AddMessage(m)
+			}
+			tb.Flush(flushFunc)
+			//if fPubsubOutputTopic != "" {}
+		}
+			
+		if weAreDone() { break }
+	}
+	Log.Printf(" -- bufferTracks clean exit\n")
 }
 
 // }}}
 
 // {{{ main
+
+var done = make(chan struct{}) // Gets closed when everything is done
+func weAreDone() bool {
+	select{
+	case <-done:
+		return true
+	default:
+		return false
+	}
+}
 
 func main() {
 	Log.Printf("(main)\n")
@@ -247,78 +394,31 @@ func main() {
 	// If we're on appengine, use their special background context; else
 	// we can't talk to appengine services such as Memcache. If we're
 	// not on appengine, https://metadata/ won't exist and so we can't
-	// sue that context; but any old context will do.
+	// use the appengine context; but any old context will do.
 	ctx := context.TODO()
 	if fOnAppEngine {
 		ctx = appengine.BackgroundContext()
 	}
+
+	// Do all the work (get new messages from pubsub; buffer up tracks) in a two-step pipeline
+	msgChan := make(chan []*adsb.CompositeMsg, 3)
+	go pullNewFromPubsub(ctx, msgChan)
+	go bufferTracks(ctx, msgChan)
+
+	// Manage vital statistics in a thread safe way
+	go trackVitals()
 	
+	// Now do basically nothing in the main thread
 	if fOnAppEngine {
-		go func(){
-			getMessagesMainloop(ctx)
-		}()
-		appengine.Main()
-		
+		appengine.Main()		
 	} else {
-/*
-		go func(){
-			if err := http.ListenAndServe(":8081", nil); err != nil {Log.Fatalf("http server: %v", err)}
-		}()
-*/
-		getMessagesMainloop(ctx)
+		go func(){ Log.Fatalf("locallisten: %v\n", http.ListenAndServe(":8081", nil)) }()
+
+		// Block until done channel lights up
+		<-done
+		time.Sleep(time.Second * 2)
+		Log.Printf("(main clean exit)\n")
 	}
-}
-
-// }}}
-
-// {{{ startHandler
-
-func startHandler(w http.ResponseWriter, r *http.Request) {
-
-	ctx1 := appengine.BackgroundContext()
-	ctx2 := appengine.NewContext(r)
-
-	fmt.Printf("(startHandler)\n")
-	fmt.Printf("ctx1=%s\nctx2=%s\n", ctx1, ctx2)
-
-	w.Write([]byte("OK"))	
-}
-
-// }}}
-// {{{ stopHandler
-
-func stopHandler(w http.ResponseWriter, r *http.Request) {
-	ctx1 := appengine.BackgroundContext()
-	// ctx2 := appengine.NewContext(r)
-
-	fmt.Printf("(stopHandler)\n")
-	fmt.Printf("ctx1=%s\n", ctx1)
-
-	// Shut down the pubsub goroutine (which should save airspace into datastore.)
-	
-	w.Write([]byte("OK"))	
-}
-
-// }}}
-// {{{ statsHandler
-
-func statsHandler(w http.ResponseWriter, r *http.Request) {
-	receiversStr := ""
-	for k,v := range receivers {
-		receiversStr += fmt.Sprintf("    %-20.20s: %7d (last update: %.1f seconds ago)\n",
-			k, v, time.Since(receiversLastSeen[k]).Seconds())
-	}
-
-	w.Write([]byte(fmt.Sprintf("OK\n* %d messages (%d dupe, %d new)\n"+
-		"* Up since %s (%s)\n"+
-		"* Last update %.1f seconds ago\n\n"+
-		"* Receivers:-\n%s\n"+
-		"* Airspace (%d bytes):-\n%s\n",
-		nMessages, nMessages-nNewMessages, nNewMessages,
-		startTime, time.Since(startTime),
-		time.Since(lastMessage).Seconds(),
-		receiversStr,
-		sizeAirspace, stringAirspace)))
 }
 
 // }}}

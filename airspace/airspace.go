@@ -7,6 +7,7 @@ import(
 	"time"
 
 	"github.com/skypies/adsb"
+	"github.com/skypies/flightdb2/ref"
 )
 
 var	DefaultRollAfter = time.Minute * 5
@@ -14,32 +15,31 @@ var DefaultMaxQuietTime = time.Minute * 5
 
 type AircraftData struct {
 	Msg *adsb.CompositeMsg
-
-	// These fields might get populated via an airframe lookup
-	Registration string
-	EquipmentType string
+	ref.Airframe // We might get this from an airframe lookup
+	NumMessagesSeen int64
 }
 
-type Airspace struct {
+type Signatures struct {
 	//// Data for message deduping.
 	// We roll curr into prev (and lose the old prev) as per rollAfter; this is to
 	// keep the memory footprint under control.
-	currMsgs         map[adsb.Signature]bool
-	prevMsgs         map[adsb.Signature]bool
-	rollAfter        time.Duration
-	timeOfLastRoll   time.Time
-
-	//// Data to represent "what is in the sky right now".
-	//
-	Aircraft map[adsb.IcaoId]AircraftData
+	CurrMsgs         map[adsb.Signature]bool
+	PrevMsgs         map[adsb.Signature]bool
+	RollAfter        time.Duration
+	TimeOfLastRoll   time.Time
+}
+	
+type Airspace struct {
+	Signatures                             // What we've seen "recently"; for deduping
+	Aircraft map[adsb.IcaoId]AircraftData  // "what is in the sky right now"; for realtime serving
 }
 
 // {{{ a.rollMsgs
 
 func (a *Airspace)rollMsgs() {
-	a.prevMsgs = a.currMsgs
-	a.currMsgs = make(map[adsb.Signature]bool)
-	a.timeOfLastRoll = time.Now()
+	a.PrevMsgs = a.CurrMsgs
+	a.CurrMsgs = make(map[adsb.Signature]bool)
+	a.TimeOfLastRoll = time.Now()
 
 	// Perhaps this should happen elsewhere, but hey, here works.
 	for k,_ := range a.Aircraft {
@@ -55,16 +55,16 @@ func (a *Airspace)rollMsgs() {
 
 func (a *Airspace)thisIsNewContent(msg *adsb.CompositeMsg) (wasNew bool) {
 	// Lazy init 
-	if a.rollAfter == time.Minute * 0 { a.rollAfter = DefaultRollAfter }
+	if a.RollAfter == time.Minute * 0 { a.RollAfter = DefaultRollAfter }
 	if a.Aircraft == nil { a.Aircraft = make(map[adsb.IcaoId]AircraftData) }
 	
 	sig := msg.GetSignature()
-	if _,existsCurr := a.currMsgs[sig]; !existsCurr {
+	if _,existsCurr := a.CurrMsgs[sig]; !existsCurr {
 		// Add it into Curr in all cases
-		a.currMsgs[sig] = true
+		a.CurrMsgs[sig] = true
 
 		existsPrev := false
-		if a.prevMsgs != nil { _,existsPrev = a.prevMsgs[sig] }
+		if a.PrevMsgs != nil { _,existsPrev = a.PrevMsgs[sig] }
 
 		// If the thing was already in prev, then it isn't new; else it is
 		return !existsPrev
@@ -86,9 +86,9 @@ func (a Airspace)String() string {
 	
 	for _,k := range keys {
 		ac := a.Aircraft[adsb.IcaoId(k)]
-		str += fmt.Sprintf(" %7.7s/%s/%s (lastSeen:%7.1fs) : %6dft, %4dknots\n",
+		str += fmt.Sprintf(" %8.8s/%s/%8s (lastSeen:%7.1fs; %5d msgs) : %6dft, %4dknots\n",
 			ac.Msg.Callsign, ac.Msg.Icao24, ac.Registration,
-			time.Since(ac.Msg.GeneratedTimestampUTC).Seconds(),
+			time.Since(ac.Msg.GeneratedTimestampUTC).Seconds(), ac.NumMessagesSeen,
 			ac.Msg.Altitude, ac.Msg.GroundSpeed)
 	}
 	return str
@@ -103,12 +103,16 @@ func (a *Airspace) MaybeUpdate(msgs []*adsb.CompositeMsg) []*adsb.CompositeMsg {
 	ret := []*adsb.CompositeMsg{}
 
 	// Time to roll (or lazily init) ?
-	if time.Since(a.timeOfLastRoll) > a.rollAfter { a.rollMsgs() }
+	if time.Since(a.TimeOfLastRoll) > a.RollAfter { a.rollMsgs() }
 
 	for _,msg := range msgs {
 		if a.thisIsNewContent(msg) {
+			numMsg := int64(0)
+			if _,exists := a.Aircraft[msg.Icao24]; exists==true {
+				numMsg = a.Aircraft[msg.Icao24].NumMessagesSeen
+			}
 			ret = append(ret,msg)
-			a.Aircraft[msg.Icao24] = AircraftData{Msg: msg}
+			a.Aircraft[msg.Icao24] = AircraftData{Msg: msg, NumMessagesSeen: int64(numMsg+1)}
 		}
 	}
 	

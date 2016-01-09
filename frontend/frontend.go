@@ -29,7 +29,7 @@ var(
 // We tart it up with airframe data, and trim out stale entries
 func getAirspaceForDisplay(c context.Context) (airspace.Airspace, error) {
 	a := airspace.Airspace{}
-	if err := a.FromMemcache(c); err != nil {
+	if err := a.JustAircraftFromMemcache(c); err != nil {
 		return a,err
 	}
 
@@ -39,8 +39,8 @@ func getAirspaceForDisplay(c context.Context) (airspace.Airspace, error) {
 		if age > kMaxStaleDuration {
 			delete(a.Aircraft, k)
 		} else if af := airframes.Get(string(k)); af != nil {
-			aircraft.Registration = af.Registration
-			aircraft.EquipmentType = af.EquipmentType
+			// Update entry in map to include the airframe data we just found
+			aircraft.Airframe = *af
 			a.Aircraft[k] = aircraft
 		}
 	}
