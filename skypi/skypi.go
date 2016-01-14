@@ -1,15 +1,13 @@
-// The receiver application attaches to a socket that writes out SBS formatted messages.
+// The skypi application attaches to a socket that writes out SBS formatted ADS-B messages.
 // It filters out the interesting ones, and aggregates together fields from different messages, to
 // build useful packets. These are then published up to a topic in Google Cloud PubSub.
 package main
 
-// cp  serfr0-fdb-blahblah.json ~/.config/gcloud/application_default_credentials.json
-// go get github.com/skypies/pi/receiver
-// go build github.com/skypies/pi/receiver
-// $GOPATH/bin/receiver -h northpi:30003 -receiver="MyStationName"
-// ... maybe also:  -maxage=4 -timeloc="America/Los_angeles"
-
-// go run receiver.go -f ~/skypi/sbs1.out
+// cp serfr0-fdb-blahblah.json ~/.config/gcloud/application_default_credentials.json
+// go get github.com/skypies/pi/skypi
+// go build github.com/skypies/pi/skypi
+// $GOPATH/bin/skypi -receiver="MyStationName"
+// ... maybe also: -h=southpi:30003 -maxage=4 -timeloc="America/Los_angeles" -v=2 -topic=""
 
 import (
 	"bufio"
@@ -30,11 +28,9 @@ import (
 var Log *log.Logger
 
 var fFilename              string
-
 var fHostPort              string
 var fProjectName           string
 var fPubsubTopic           string
-
 var fReceiverName          string
 var fDump1090TimeLocation  string
 var fBufferMaxAgeSeconds   int64
@@ -42,24 +38,20 @@ var fVerbose               int
 
 func init() {
 	flag.StringVar(&fFilename, "f", "", "sbs formatted CSV file thing to read")
-
 	flag.StringVar(&fReceiverName, "receiver", "TestStation", "Name for this data source")
-	flag.StringVar(&fHostPort, "h", "", "host:port of dump1090-box:30003")	
+	flag.StringVar(&fHostPort, "h", "localhost:30003", "host:port of dump1090-box:30003")	
 	flag.StringVar(&fProjectName, "project", "serfr0-fdb",
 		"Name of the Google cloud project hosting the pubsub")
 	flag.StringVar(&fPubsubTopic, "topic", "adsb-inbound",
-		"Name of the pubsub topic to post to (short name, not projects/blah...)")
+		"Name of the pubsub topic to post to (set to empty for dry-run mode)")
 	flag.StringVar(&fDump1090TimeLocation, "timeloc", "UTC",
 		"Which timezone dump1090 thinks it is in (e.g. America/Los_Angeles)")
-
 	flag.Int64Var(&fBufferMaxAgeSeconds, "maxage", 10,
 		"How many seconds we wait before shipping a batch of messages out to pubsub")
-	flag.IntVar(&fVerbose, "v", 0, "how verbose to get")
-	
+	flag.IntVar(&fVerbose, "v", 0, "how verbose to get")	
 	flag.Parse()
 	
-	Log = log.New(os.Stdout,"", log.Ldate|log.Ltime)//|log.Lshortfile)
-	
+	Log = log.New(os.Stdout,"", log.Ldate|log.Ltime)//|log.Lshortfile)	
 	Log.Printf("(max message age is %d seconds)\n", fBufferMaxAgeSeconds)
 	if fPubsubTopic == "" {
 		Log.Printf("(no topic defined, in dry-run mode)\n")
@@ -99,6 +91,7 @@ func getIoReader() io.Reader {
 		}
 	} else if fHostPort != "" {
 		if conn,err := net.Dial("tcp", fHostPort); err != nil {
+			// Should not be a panic; system dump1090 can go down
 			panic(err)
 		} else {
 			Log.Printf("connecting to '%s'", fHostPort)
@@ -108,7 +101,6 @@ func getIoReader() io.Reader {
 		panic("No inputs defined")
 	}
 }
-
 
 func publishMsgBundles(ch <-chan []*adsb.CompositeMsg) {
 	c := pubsub.GetLocalContext(fProjectName)
@@ -127,7 +119,9 @@ func publishMsgBundles(ch <-chan []*adsb.CompositeMsg) {
 				}
 			}
 			if fPubsubTopic != "" {
-				pubsub.PublishMsgs(c, fPubsubTopic, fReceiverName, msgs)
+				if err := pubsub.PublishMsgs(c, fPubsubTopic, fReceiverName, msgs); err != nil {
+					Log.Printf("-- err: %v\n", err)
+				}
 			}
 			wg.Done()
 		}(msgs)
