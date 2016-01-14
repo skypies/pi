@@ -12,7 +12,7 @@ import (
 	"log"
 	"net"
 	"os"
-	//"time"
+	"time"
 	
 	"github.com/skypies/adsb"
 	"github.com/skypies/pi/tracktable"
@@ -57,8 +57,6 @@ func getIoReader() io.Reader {
 var kSweepAfter = 100
 
 func main() {
-	scanner := bufio.NewScanner(getIoReader())
-
 	table := tracktable.New()
 	table.WaitTime = 300 // If a given transponder goes quiet for 3000, ship the track
 	table.StationName = "ScottsValley"
@@ -66,22 +64,31 @@ func main() {
 	
 	// Main goroutine: read input, add it to the TrackTable
 	i := 1
-	for scanner.Scan() {
-		m := adsb.Msg{}
-		text := scanner.Text()
-		if err := m.FromSBS1(text); err != nil {
-			Log.Fatal(err)
-			continue
+outerLoop:
+	for {
+		scanner := bufio.NewScanner(getIoReader())
+		for scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				Log.Printf("scanner err (will retry): %v\n", err)
+				time.Sleep(time.Second * 10)
+				continue outerLoop
+			}
+
+			m := adsb.Msg{}
+			text := scanner.Text()
+			if err := m.FromSBS1(text); err != nil {
+				Log.Printf("SBS parse fail '%v', input:%q", err, text)
+				continue
+			}
+
+			//Log.Printf("   --- %s\n", text)
+			table.AddMessage(&m)
+			if (i % kSweepAfter) == 0 { table.Sweep() }
+			i++
 		}
 
-		//Log.Printf("   --- %s\n", text)
-		table.AddMessage(&m)
-		if (i % kSweepAfter) == 0 { table.Sweep() }
-		i++
-		
-		if err := scanner.Err(); err != nil {
-			Log.Fatal(err)
-		}
+		Log.Print("Scanner died, starting another in 5s ...")
+		time.Sleep(time.Second * 5)
 	}
 //	table.Sweep()
 //	time.Sleep(1 * time.Second)
