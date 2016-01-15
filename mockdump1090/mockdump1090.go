@@ -1,5 +1,5 @@
-// go run mockdump1090.go -delay=10s   (will listen on localhost:30003)
-// go run skypi.go -topic="" -v=1      (will autoconnect to localhost:30003)
+// go run ./mockdump1090.go -delay=10s   (will listen on localhost:30003)
+// go run ./skypi.go -topic="" -v=1      (will autoconnect to localhost:30003)
 
 package main
 

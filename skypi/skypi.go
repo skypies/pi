@@ -87,7 +87,7 @@ func getIoReader() io.Reader {
 		if weAreDone() { break }
 		if conn,err := net.Dial("tcp", fHostPort); err != nil {
 			Log.Printf("connect '%s': err %s; trying again soon ...", fHostPort, err)
-			time.Sleep(time.Second * 15)
+			time.Sleep(time.Second * 5)
 		} else {
 			Log.Printf("connecting to '%s'", fHostPort)
 			return conn // a net.Conn implements io.Reader
