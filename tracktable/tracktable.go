@@ -110,14 +110,14 @@ func (t *TrackTable)Sweep() {
 	ready := t.ListFinished()
 	removed := t.RemoveTracks(ready)
 	// Spin this work off into a thread, so we can get back to handling packets
-	go SendTracks(removed)
+	go SendTracks(removed, t.PostUrl)
 }
 
-func SendTracks(tracks []*Track) {
+func SendTracks(tracks []*Track, postUrl string) {
 	for _,track := range tracks {
 		if len(track.Messages) > 0 {
-			// fmt.Printf("Purging [%s] %d points\n", track.Icao, len(track.Messages))
-			track.Send()
+			fmt.Printf("Purging [%s] %d points to <%s>\n", track.Icao, len(track.Messages), postUrl)
+			track.Send(postUrl)
 		}
 	}
 }
@@ -147,16 +147,13 @@ func (track Track)ToFlightDBTrack() flightdb.Track {
 	return out
 }
 
-func (track Track)Send() {
-	host := "complaints.serfr1.org" //"localhost:8080"
-	path := "/fdb/addtrack"
-
+func (track Track)Send(postUrl string) {
+	if postUrl == "" { return }
+	
 	outTrack := track.ToFlightDBTrack()
 	outBase64,_ := outTrack.Base64Encode()
-
-	return // XXX DISABLED FOR SAFETY
 	
-	resp,err := http.PostForm("http://"+host+path, url.Values{
+	resp,err := http.PostForm(postUrl, url.Values{
 		"icaoid": {string(track.Icao)},
 		"callsign": {string(track.LastCallsign)},
 		"track": {outBase64},

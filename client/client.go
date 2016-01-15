@@ -60,6 +60,7 @@ func main() {
 	table := tracktable.New()
 	table.WaitTime = 300 // If a given transponder goes quiet for 3000, ship the track
 	table.StationName = "ScottsValley"
+	table.PostUrl = "http://stop.jetnoise.net/fdb/addtrack"
 	// ... etc etc
 	
 	// Main goroutine: read input, add it to the TrackTable
