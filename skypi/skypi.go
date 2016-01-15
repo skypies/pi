@@ -7,7 +7,7 @@ package main
 // go get github.com/skypies/pi/skypi
 // go build github.com/skypies/pi/skypi
 // $GOPATH/bin/skypi -receiver="MyStationName"
-// ... maybe also: -h=southpi:30003 -maxage=4 -timeloc="America/Los_angeles" -v=2 -topic=""
+// ... maybe also: -h=southpi:30003 -maxage=4s -timeloc="America/Los_angeles" -v=2 -topic=""
 
 import (
 	"bufio"
@@ -27,32 +27,33 @@ import (
 
 var Log *log.Logger
 
-var fFilename              string
 var fHostPort              string
 var fProjectName           string
 var fPubsubTopic           string
 var fReceiverName          string
 var fDump1090TimeLocation  string
-var fBufferMaxAgeSeconds   int64
+var fBufferMaxAge          time.Duration
+var fBufferMinPublish      time.Duration
 var fVerbose               int
 
 func init() {
-	flag.StringVar(&fFilename, "f", "", "sbs formatted CSV file thing to read")
 	flag.StringVar(&fReceiverName, "receiver", "TestStation", "Name for this data source")
-	flag.StringVar(&fHostPort, "h", "localhost:30003", "host:port of dump1090-box:30003")	
+	flag.StringVar(&fHostPort, "host", "localhost:30003", "host:port of dump1090-box:30003")	
 	flag.StringVar(&fProjectName, "project", "serfr0-fdb",
 		"Name of the Google cloud project hosting the pubsub")
 	flag.StringVar(&fPubsubTopic, "topic", "adsb-inbound",
 		"Name of the pubsub topic to post to (set to empty for dry-run mode)")
 	flag.StringVar(&fDump1090TimeLocation, "timeloc", "UTC",
 		"Which timezone dump1090 thinks it is in (e.g. America/Los_Angeles)")
-	flag.Int64Var(&fBufferMaxAgeSeconds, "maxage", 10,
-		"How many seconds we wait before shipping a batch of messages out to pubsub")
+	flag.DurationVar(&fBufferMaxAge, "maxage", 10*time.Second,
+		"If we're holding a message this old, ship 'em all out to pubsub")
+	flag.DurationVar(&fBufferMinPublish, "minwait", 5*time.Second,
+		"maxage notwithstanding, *always* wait at least this long between shipping bundles to pubsub")
 	flag.IntVar(&fVerbose, "v", 0, "how verbose to get")	
 	flag.Parse()
 	
 	Log = log.New(os.Stdout,"", log.Ldate|log.Ltime)//|log.Lshortfile)	
-	Log.Printf("(max message age is %d seconds)\n", fBufferMaxAgeSeconds)
+	Log.Printf("(max message age is %s, min interval is %s)\n", fBufferMaxAge, fBufferMinPublish)
 	if fPubsubTopic == "" {
 		Log.Printf("(no topic defined, in dry-run mode)\n")
 	}
@@ -82,24 +83,17 @@ func addSIGINTHandler() {
 }
 
 func getIoReader() io.Reader {
-	if fFilename != "" {
-		if osFile, err := os.Open(fFilename); err != nil {
-			panic(err)
-		} else {
-			Log.Printf("reading file '%s'", fFilename)
-			return osFile
-		}
-	} else if fHostPort != "" {
+	for {
+		if weAreDone() { break }
 		if conn,err := net.Dial("tcp", fHostPort); err != nil {
-			// Should not be a panic; system dump1090 can go down
-			panic(err)
+			Log.Printf("connect '%s': err %s; trying again soon ...", fHostPort, err)
+			time.Sleep(time.Second * 15)
 		} else {
 			Log.Printf("connecting to '%s'", fHostPort)
 			return conn // a net.Conn implements io.Reader
 		}
-	} else {
-		panic("No inputs defined")
 	}
+	return nil
 }
 
 func publishMsgBundles(ch <-chan []*adsb.CompositeMsg) {
@@ -111,7 +105,8 @@ func publishMsgBundles(ch <-chan []*adsb.CompositeMsg) {
 
 		go func(msgs []*adsb.CompositeMsg) {
 			if fVerbose > 0 {
-				Log.Printf("-- flushing %d msgs\n", len(msgs))
+				age := time.Since(msgs[0].GeneratedTimestampUTC)
+				Log.Printf("-- flushing %d msgs, oldest %s\n", len(msgs), age)
 				if fVerbose > 1 {
 					for i,m := range msgs {
 						Log.Printf(" [%2d] %s\n", i, m)
@@ -142,7 +137,8 @@ func main() {
 
 	mb := msgbuffer.NewMsgBuffer()
 	mb.FlushChannel = ch
-	mb.MaxMessageAgeSeconds = fBufferMaxAgeSeconds // Not applicable when reading from files
+	mb.MaxMessageAge = fBufferMaxAge
+	mb.MinPublishInterval = fBufferMinPublish
 
 outerLoop:
 	for {
