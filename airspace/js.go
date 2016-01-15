@@ -9,7 +9,7 @@ import (
 func (ad AircraftData)ToJSString() string {
 	m := ad.Msg	
 	fdbUrl := fmt.Sprintf("https://ui-dot-serfr0-fdb.appspot.com/fdb/tracks?icaoid=%s&t=%d",
-		string(m.Icao24), time.Now().Add(-30 * time.Second))
+		string(m.Icao24), time.Now().Add(-30 * time.Second).Unix())
 	faUrl := fmt.Sprintf("http://flightaware.com/live/flight/%s", m.Callsign)
 
 	return fmt.Sprintf("receiver:\"%s\", callsign:%q, icao24:%q, reg:%q, equip:%q, icao:%q, "+

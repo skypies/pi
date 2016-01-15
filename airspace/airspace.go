@@ -7,7 +7,7 @@ import(
 	"time"
 
 	"github.com/skypies/adsb"
-	"github.com/skypies/flightdb2/ref"
+	fdb "github.com/skypies/flightdb2"
 )
 
 var	DefaultRollAfter = time.Minute * 5
@@ -15,7 +15,7 @@ var DefaultMaxQuietTime = time.Minute * 5
 
 type AircraftData struct {
 	Msg *adsb.CompositeMsg
-	ref.Airframe // We might get this from an airframe lookup
+	fdb.Airframe // We might get this from an airframe lookup
 	NumMessagesSeen int64
 }
 
@@ -86,7 +86,7 @@ func (a Airspace)String() string {
 	
 	for _,k := range keys {
 		ac := a.Aircraft[adsb.IcaoId(k)]
-		str += fmt.Sprintf(" %8.8s/%s/%8s (lastSeen:%7.1fs; %5d msgs) : %6dft, %4dknots\n",
+		str += fmt.Sprintf(" %8.8s/%s/%s (last:%6.1fs, %5d msgs) %5df, %3dk\n",
 			ac.Msg.Callsign, ac.Msg.Icao24, ac.Registration,
 			time.Since(ac.Msg.GeneratedTimestampUTC).Seconds(), ac.NumMessagesSeen,
 			ac.Msg.Altitude, ac.Msg.GroundSpeed)

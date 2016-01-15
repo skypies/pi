@@ -72,7 +72,8 @@ func init() {
 	flag.BoolVar(&fOnAppEngine, "ae", true, "on appengine (use http://metadata/ etc)")
 	flag.Parse()
 
-	http.HandleFunc("/", statsHandler)
+	http.HandleFunc("/", statusHandler)
+	http.HandleFunc("/reset", resetHandler)
 	http.HandleFunc("/_ah/start", startHandler)
 	http.HandleFunc("/_ah/stop", stopHandler)
 
@@ -165,12 +166,20 @@ func addSIGINTHandler() {
 }
 
 // }}}
-// {{{ statsHandler
+// {{{ statusHandler
 
-func statsHandler(w http.ResponseWriter, r *http.Request) {
+func statusHandler(w http.ResponseWriter, r *http.Request) {
 	vitalsRequestChan<- VitalsRequest{Name:"_output"}
 	str := <-vitalsResponseChan
 	w.Write([]byte(fmt.Sprintf("OK\n%s", str)))
+}
+
+// }}}
+// {{{ resetHandler
+
+func resetHandler(w http.ResponseWriter, r *http.Request) {
+	vitalsRequestChan<- VitalsRequest{Name:"_reset"}
+	w.Write([]byte(fmt.Sprintf("OK\n")))
 }
 
 // }}}
@@ -209,6 +218,7 @@ func trackVitals() {
 			if req.Name == "_reset" {
 				counters = map[string]int64{}
 				receivers = map[string]ReceiverSummary{}
+				startupTime = time.Now().Round(time.Second)
 
 			} else if req.Name == "_update" {
 				// This represents "we received a bundle", and we update according to the LastMsg
@@ -228,11 +238,11 @@ func trackVitals() {
 				rcvrs := ""
 				for k,v := range receivers {
 					rcvrs += fmt.Sprintf(
-						"    %-20.20s: %7d msgs (%7d bundles) (last update: %.1f seconds ago)\n",
+						"    %-15.15s: %7d msgs, %7d bundles, last %.1f s\n",
 						k, v.NumMessagesSent, v.NumBundlesSent, time.Since(v.LastBundleTime).Seconds())
 				}
 				str := fmt.Sprintf(
-						"* %d messages received (%d dupes; %d messages in total; %d bundles)\n"+
+						"* %d messages (%d dupes; %d total; %d bundles)\n"+
 						"* Uptime: %s (started %s)\n"+
 						"* Preload: %s\n"+
 						"\n"+
@@ -294,7 +304,7 @@ func pullNewFromPubsub(suppliedCtx context.Context, msgsOut chan<- []*adsb.Compo
 
 		newMsgs := as.MaybeUpdate(msgs)
 
-		// Update our vital stats, with the bundle
+		// Update our vital stats, with info about this bundle
 		airspaceBytes,_ := as.ToBytes()
 		vitalsRequestChan<- VitalsRequest{
 			Name: "_update",
@@ -429,7 +439,7 @@ func main() {
 
 		// Block until done channel lights up
 		<-done
-		time.Sleep(time.Second * 4)
+		time.Sleep(time.Second * 20)  // Give the pubsub loop a chance to unblock and exit
 		Log.Printf("(main clean exit)\n")
 	}
 }
