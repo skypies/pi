@@ -110,7 +110,7 @@ func (t *TrackTable)Sweep() {
 	ready := t.ListFinished()
 	removed := t.RemoveTracks(ready)
 	// Spin this work off into a thread, so we can get back to handling packets
-	go SendTracks(removed, t.PostUrl)
+	go SendTracks(removed, t.PostURL)
 }
 
 func SendTracks(tracks []*Track, postUrl string) {

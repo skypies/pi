@@ -22,11 +22,14 @@ var Log *log.Logger
 
 var fHostPort string
 var fFilename string
+var fTrackpostUrl string
 var fDumpPos  bool
 
 func init() {
 	flag.StringVar(&fHostPort, "h", "", "host:port of dump1090:30003")
 	flag.StringVar(&fFilename, "f", "", "sbs formatted CSV file thing to read")
+	flag.StringVar(&fTrackpostUrl, "t", "http://stop.jetnoise.net/fdb/addtrack",
+		"URL to post track fragments to")
 	flag.BoolVar  (&fDumpPos,  "pos", false, "just dump out positions")
 	flag.Parse()
 	
@@ -60,7 +63,7 @@ func main() {
 	table := tracktable.New()
 	table.WaitTime = 300 // If a given transponder goes quiet for 3000, ship the track
 	table.StationName = "ScottsValley"
-	table.PostUrl = "http://stop.jetnoise.net/fdb/addtrack"
+	table.PostURL = fTrackpostUrl
 	// ... etc etc
 	
 	// Main goroutine: read input, add it to the TrackTable
