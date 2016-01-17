@@ -22,7 +22,7 @@ function localOverlay() {
             'Heading: '+a.heading+' degrees<br/>'+
             'Position: ('+a.pos.lat+','+a.pos.lng+')<br/>'+
             'Last seen: '+a.age+' seconds ago<br/>'+
-            'Receiver: '+a.receiver+'<br/>'
+            'Source: '+a.source+' / '+a.receiver+'<br/>'
             '</div>';
 
         var marker = new google.maps.Marker({
@@ -32,7 +32,7 @@ function localOverlay() {
             icon: {
                 path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
                 scale: 3,
-                strokeColor: '#0033ff',
+                strokeColor: a.color,
                 strokeWeight: 2,
                 rotation: a.heading,
             },

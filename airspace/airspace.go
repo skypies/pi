@@ -17,6 +17,7 @@ type AircraftData struct {
 	Msg *adsb.CompositeMsg
 	fdb.Airframe // We might get this from an airframe lookup
 	NumMessagesSeen int64
+	Source string // Where this data was sourced
 }
 
 type Signatures struct {

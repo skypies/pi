@@ -9,7 +9,7 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/appengine"
 
-	"github.com/skypies/date"
+	"github.com/skypies/util/date"
 	"github.com/skypies/geo/sfo"
 	"github.com/skypies/pi/airspace"
 
