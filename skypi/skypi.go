@@ -45,9 +45,9 @@ func init() {
 		"Name of the pubsub topic to post to (set to empty for dry-run mode)")
 	flag.StringVar(&fDump1090TimeLocation, "timeloc", "UTC",
 		"Which timezone dump1090 thinks it is in (e.g. America/Los_Angeles)")
-	flag.DurationVar(&fBufferMaxAge, "maxage", 10*time.Second,
+	flag.DurationVar(&fBufferMaxAge, "maxage", 2*time.Second,
 		"If we're holding a message this old, ship 'em all out to pubsub")
-	flag.DurationVar(&fBufferMinPublish, "minwait", 5*time.Second,
+	flag.DurationVar(&fBufferMinPublish, "minwait", 1500*time.Millisecond,
 		"maxage notwithstanding, *always* wait at least this long between shipping bundles to pubsub")
 	flag.IntVar(&fVerbose, "v", 0, "how verbose to get")	
 	flag.Parse()
@@ -107,11 +107,7 @@ func publishMsgBundles(ch <-chan []*adsb.CompositeMsg) {
 			if fVerbose > 0 {
 				age := time.Since(msgs[0].GeneratedTimestampUTC)
 				Log.Printf("-- flushing %d msgs, oldest %s\n", len(msgs), age)
-				if fVerbose > 1 {
-					for i,m := range msgs {
-						Log.Printf(" [%2d] %s\n", i, m)
-					}
-				}
+				if fVerbose > 1 { for i,m := range msgs { Log.Printf(" [%2d] %s\n", i, m) } }
 			}
 			if fPubsubTopic != "" {
 				if err := pubsub.PublishMsgs(c, fPubsubTopic, fReceiverName, msgs); err != nil {
