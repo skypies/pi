@@ -6,7 +6,7 @@ import(
 	"regexp"
 	"time"
 
-	"github.com/skypies/date"
+	"github.com/skypies/util/date"
 )
 
 var (
