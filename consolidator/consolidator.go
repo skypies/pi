@@ -282,9 +282,9 @@ func pullNewFromPubsub(suppliedCtx context.Context, msgsOut chan<- []*adsb.Compo
 			loadedOnStartup = fmt.Sprintf("error loading: %v", err)
 			as = airspace.Airspace{}
 		} else {
-			loadedOnStartup = fmt.Sprintf("loaded curr=%d (prev=%d), aircraft=%d",
+			loadedOnStartup = fmt.Sprintf("loaded sigs=(%d,%d), aircraft=%d, age=%s",
 				len(as.Signatures.CurrMsgs),len(as.Signatures.PrevMsgs),
-				len(as.Aircraft))
+				len(as.Aircraft), as.Youngest())
 		}
 		vitalsRequestChan<- VitalsRequest{Name: "loadedOnStartup", Str:loadedOnStartup}
 	}

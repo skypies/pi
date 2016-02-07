@@ -96,6 +96,19 @@ func (a Airspace)String() string {
 }
 
 // }}}
+// {{{ a.Youngest
+
+func (a Airspace)Youngest() time.Duration {
+	youngest := time.Hour * 480
+	for _,ad := range a.Aircraft {
+		age := time.Since(ad.Msg.GeneratedTimestampUTC)
+		if age < youngest { youngest = age }
+	}
+	return youngest
+}
+
+// }}}
+
 // {{{ a.MaybeUpdate
 
 // If any messages are new, update our view of the world. Return the indicies of the messages
