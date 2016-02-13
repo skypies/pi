@@ -136,6 +136,8 @@ func main() {
 	mb.MaxMessageAge = fBufferMaxAge
 	mb.MinPublishInterval = fBufferMinPublish
 
+	nTimeMismatches := 0
+	
 outerLoop:
 	for {
 		scanner := bufio.NewScanner(getIoReader())
@@ -152,13 +154,23 @@ outerLoop:
 				Log.Printf("SBS parse fail '%v', input:%q", err, text)
 				continue
 			}
-			mb.Add(&msg)
 
+			// If there is significant clock skew, we should bail. But, it seems
+			// that sometimes we pick up stale data from dump1090; so wait to see
+			// if it passes.
 			offset := time.Since(msg.GeneratedTimestampUTC)
 			if offset > time.Minute * 30 || offset < time.Minute * -30 {
-				Log.Fatalf("do you need to set -timeloc ?\nNow = %s\nmsg = %s\n", time.Now(),
-					msg.GeneratedTimestampUTC)
+				nTimeMismatches++
+				if nTimeMismatches < 100 {
+					continue
+				} else {
+					Log.Fatalf("100 bad msgs; set -timeloc ?\nNow = %s\nmsg = %s\n", time.Now(),
+						msg.GeneratedTimestampUTC)
+				}
 			}
+
+			mb.Add(&msg)
+
 			if weAreDone() { break outerLoop}
 		}
 		Log.Print("Scanner died, starting another in 5s ...")

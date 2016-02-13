@@ -11,7 +11,8 @@ function initMap() {
         document.getElementById('legend'));
 
     classBOverlay()
-    serfrOverlay()
+    pathsOverlay()
+
     localOverlay()
 }
 
@@ -39,87 +40,77 @@ function classBOverlay() {
         });
     }
 }
+// These should come from geo/sfo
+var waypoints = {
+    // SERFR2
+    "SERFR": {pos:{lat: 36.0683056 , lng:  -121.3646639}},
+    "NRRLI": {pos:{lat: 36.4956000 , lng:  -121.6994000}},
+    "WWAVS": {pos:{lat: 36.7415306 , lng:  -121.8942333}},        
+    "EPICK": {pos:{lat: 36.9508222 , lng:  -121.9526722}},
+    "EDDYY": {pos:{lat: 37.3264500 , lng:  -122.0997083}},
+    "SWELS": {pos:{lat: 37.3681556 , lng:  -122.1160806}},
+    "MENLO": {pos:{lat: 37.4636861 , lng:  -122.1536583}},
 
-function serfrOverlay() {
-    var fixes = {
-        "SERFR": {pos:{lat: 36.0683056 , lng:  -121.3646639}},
-        "NRRLI": {pos:{lat: 36.4956000 , lng:  -121.6994000}},
-        "WWAVS": {pos:{lat: 36.7415306 , lng:  -121.8942333}},
-        
-        "EPICK": {pos:{lat: 36.9508222 , lng:  -121.9526722}},
-        "EDDYY": {pos:{lat: 37.3264500 , lng:  -122.0997083}},
-        "SWELS": {pos:{lat: 37.3681556 , lng:  -122.1160806}},
-        "MENLO": {pos:{lat: 37.4636861 , lng:  -122.1536583}},
-        // This is the rarely used 'bad weather' fork, WWAVS1 (uses the other runways)
-        "WPOUT": {pos:{lat: 37.1194861 , lng:  -122.2927417}},
-        "THEEZ": {pos:{lat: 37.5034694 , lng:  -122.4247528}},
-        "WESLA": {pos:{lat: 37.6643722 , lng:  -122.4802917}},
-        "MVRKK": {pos:{lat: 37.7369722 , lng:  -122.4544500}},
+    // WWAVS1 This is the rarely used 'bad weather' fork (uses the other runways)
+    "WPOUT": {pos:{lat: 37.1194861 , lng:  -122.2927417}},
+    "THEEZ": {pos:{lat: 37.5034694 , lng:  -122.4247528}},
+    "WESLA": {pos:{lat: 37.6643722 , lng:  -122.4802917}},
+    "MVRKK": {pos:{lat: 37.7369722 , lng:  -122.4544500}},
 
-        // BRIXX
-        //"CORKK": {pos:{lat: 37.7335889 , lng:  -122.4975500}},
-        //"BRIXX": {pos:{lat: 37.6178444 , lng:  -122.3745278}},
-        "LUYTA": {pos:{lat: 37.2948889 , lng:  -122.2045528}},
-        "JILNA": {pos:{lat: 37.2488056 , lng:  -122.1495000}},
-        "YADUT": {pos:{lat: 37.2039889 , lng:  -122.0232778}},
-    }
+    // BRIXX1 (skip the first two, nothing flies along them anyway and they make a mess)
+    //"CORKK": {pos:{lat: 37.7335889 , lng:  -122.4975500}},
+    //"BRIXX": {pos:{lat: 37.6178444 , lng:  -122.3745278}},
+    "LUYTA": {pos:{lat: 37.2948889 , lng:  -122.2045528}},
+    "JILNA": {pos:{lat: 37.2488056 , lng:  -122.1495000}},
+    "YADUT": {pos:{lat: 37.2039889 , lng:  -122.0232778}},
 
-    for (var fix in fixes) {
+    // http://flightaware.com/resources/airport/SFO/STAR/BIG+SUR+TWO/pdf
+    "CARME": {pos:{lat: 36.4551833, lng: -121.8797139}},
+    "ANJEE": {pos:{lat: 36.7462861, lng: -121.9648917}},
+    "SKUNK": {pos:{lat: 37.0075944, lng: -122.0332278}},
+    "BOLDR": {pos:{lat: 37.1708861, lng: -122.0761667}},       
+}
+
+function pathsOverlay() {
+    for (var wp in waypoints) {
         var fixCircle = new google.maps.Circle({
             strokeWeight: 2,
             strokeColor: '#990099',
             //fillColor: '#990099',
             fillOpacity: 0.0,
             map: map,
-            center: fixes[fix].pos,
+            center: waypoints[wp].pos,
             radius: 300
         });
-        // Would be nice to render the name (fix) on the map somehow; see link below.
+        // Would be nice to render the waypoint's name on the map somehow ...
+        // http://stackoverflow.com/questions/3953922/is-it-possible-to-write-custom-text-on-google-maps-api-v3
     }
 
-    var rightFixes = ["SERFR", "NRRLI", "WWAVS", "EPICK", "EDDYY", "SWELS", "MENLO"];
-    var rightLineCoords = []
-    for (var fix in rightFixes) {
-        rightLineCoords.push(fixes[rightFixes[fix]].pos);
-    }
-    var rightLine = new google.maps.Polyline({
-        path: rightLineCoords,
-        geodesic: true,
-        strokeColor: '#990099',
-        strokeOpacity: 0.8,
-        strokeWeight: 1
-    });
-    rightLine.setMap(map)
+    // These should come from geo/sfo/procedures
+    var SERFR2 = ["SERFR", "NRRLI", "WWAVS", "EPICK", "EDDYY", "SWELS", "MENLO"];
+    var WWAVS1 = ["WWAVS", "WPOUT", "THEEZ", "WESLA", "MVRKK"];
+    var BRIXX1 = ["LUYTA", "JILNA", "YADUT"];
+    var BSR2   = ["CARME", "ANJEE", "SKUNK", "BOLDR", "MENLO"];
 
-    var wwavsFixes = ["WWAVS", "WPOUT", "THEEZ", "WESLA", "MVRKK"];
-    var wwavsLineCoords = []
-    for (var fix in wwavsFixes) {
-        wwavsLineCoords.push(fixes[wwavsFixes[fix]].pos);
-    }
-    var wwavsLine = new google.maps.Polyline({
-        path: wwavsLineCoords,
-        geodesic: true,
-        strokeColor: '#990099',
-        strokeOpacity: 0.8,
-        strokeWeight: 1
-    });
-    wwavsLine.setMap(map)
-
-    var brixxFixes = ["LUYTA", "JILNA", "YADUT"];
-    var brixxLineCoords = []
-    for (var fix in brixxFixes) {
-        brixxLineCoords.push(fixes[brixxFixes[fix]].pos);
-    }
-    var brixxLine = new google.maps.Polyline({
-        path: brixxLineCoords,
-        geodesic: true,
-        strokeColor: '#990099',
-        strokeOpacity: 0.8,
-        strokeWeight: 1
-    });
-    brixxLine.setMap(map)
+    drawPath(SERFR2, '#990099')
+    drawPath(WWAVS1, '#990099')
+    drawPath(BRIXX1, '#990099')
+    drawPath(BSR2,   '#007788')
 }
 
-// http://stackoverflow.com/questions/3953922/is-it-possible-to-write-custom-text-on-google-maps-api-v3
+function drawPath(fixes, color) {
+    var pathLineCoords = []
+    for (var fix in fixes) {
+        pathLineCoords.push(waypoints[fixes[fix]].pos);
+    }
+    var pathLine = new google.maps.Polyline({
+        path: pathLineCoords,
+        geodesic: true,
+        strokeColor: color,
+        strokeOpacity: 0.8,
+        strokeWeight: 1
+    });
+    pathLine.setMap(map)
+}
 
 {{end}}
