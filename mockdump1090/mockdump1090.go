@@ -1,5 +1,7 @@
-// go run ./mockdump1090.go -delay=10s   (will listen on localhost:30003)
-// go run ./skypi.go -topic="" -v=1      (will autoconnect to localhost:30003)
+// go run ./mockdump1090.go replay.go -p 30003 -delay=10s         (will listen on localhost:30003)
+// go run ./mockdump1090.go replay.go -p 39003 -delay=10s -mlat   (generate MLAT messages)
+
+// go run ./skypi.go -topic="" -v=1
 
 package main
 
@@ -7,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 	
 	"github.com/skypies/geo"
@@ -14,15 +17,41 @@ import (
 )
 
 var delay time.Duration
+var port int
+var mlat bool
+var replayFiles []string
+var icaoWhitelist = map[string]int{}
 func init() {
 	flag.DurationVar(&delay, "delay", 0, "simulate messages delayed by this long (e.g. 1s, 2m30s)")
+	flag.IntVar(&port, "p", 30003, "which port to listen on")
+	flag.BoolVar(&mlat, "mlat", false, "send MLAT packets")
+
+	replay := ""
+	flag.StringVar(&replay, "replay", "", "comma-sep list of files to replay")
+
+	wlist := ""
+	flag.StringVar(&wlist, "ids", "", "Icao IDs to replay (comma-sep), blank for all")
+	
 	flag.Parse()
+
+	replayFiles = strings.Split(replay, ",")
+	for _,id := range strings.Split(wlist, ",") {
+		icaoWhitelist[id] = 1
+	}
 }
 
 func main() {
-	fmt.Printf("(launching mock dump0190 on localhost:30003)\n")
+	if len(replayFiles) > 0 {
+		replayData(replayFiles, icaoWhitelist)
+	} else {
+		generateData()
+	}
+}
 
-	ln, _ := net.Listen("tcp", "localhost:30003")
+func generateData() {
+	fmt.Printf("(launching mock dump0190 on localhost:%d; mlat=%v)\n", port, mlat)
+
+	ln, _ := net.Listen("tcp", fmt.Sprintf("localhost:%d",port))
 
 outerLoop:
 	for {
@@ -56,6 +85,8 @@ outerLoop:
 			m.Position.Lat += 0.01
 			m.GeneratedTimestampUTC = now
 			m.LoggedTimestampUTC = now
+
+			if mlat { m.Type = "MLAT" }
 			
 			if _,err := conn.Write([]byte(fmt.Sprintf("%s\n", m.ToSBS1()))); err != nil {
 				fmt.Printf("(connection ended)\n")
@@ -66,3 +97,6 @@ outerLoop:
 		}
 	}
 }
+
+
+

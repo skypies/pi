@@ -1,6 +1,6 @@
-// The skypi application attaches to a socket that writes out SBS formatted ADS-B messages.
+// The skypi application attaches to sockets that write out SBS formatted ADS-B messages.
 // It filters out the interesting ones, and aggregates together fields from different messages, to
-// build useful packets. These are then published up to a topic in Google Cloud PubSub.
+// build useful packets. These are then published up to a topic in Google Cloud PubSub in bundles.
 package main
 
 // cp serfr0-fdb-blahblah.json ~/.config/gcloud/application_default_credentials.json
@@ -12,11 +12,11 @@ package main
 import (
 	"bufio"
 	"flag"
-	"io"
 	"log"
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"time"
 	
@@ -27,7 +27,7 @@ import (
 
 var Log *log.Logger
 
-var fHostPort              string
+var fHostPorts             string
 var fProjectName           string
 var fPubsubTopic           string
 var fReceiverName          string
@@ -38,7 +38,7 @@ var fVerbose               int
 
 func init() {
 	flag.StringVar(&fReceiverName, "receiver", "TestStation", "Name for this data source")
-	flag.StringVar(&fHostPort, "host", "localhost:30003", "host:port of dump1090-box:30003")	
+	flag.StringVar(&fHostPorts, "hosts", "localhost:30003", "host:port[,host2:port2]")	
 	flag.StringVar(&fProjectName, "project", "serfr0-fdb",
 		"Name of the Google cloud project hosting the pubsub")
 	flag.StringVar(&fPubsubTopic, "topic", "adsb-inbound",
@@ -82,25 +82,35 @@ func addSIGINTHandler() {
 	}(c)
 }
 
-func getIoReader() io.Reader {
-	for {
+// acceptMsg is a goroutine which owns the message buffer data structure.
+// All input sources of messages submit to this routine, which adds the to the message buffer.
+func acceptMsg(msgChan <-chan *adsb.Msg, publishChan chan<- []*adsb.CompositeMsg) {
+	mb := msgbuffer.NewMsgBuffer()
+	mb.FlushChannel = publishChan
+	mb.MaxMessageAge = fBufferMaxAge
+	mb.MinPublishInterval = fBufferMinPublish
+
+	for msg := range msgChan {
+		mb.Add(msg)
 		if weAreDone() { break }
-		if conn,err := net.Dial("tcp", fHostPort); err != nil {
-			Log.Printf("connect '%s': err %s; trying again soon ...", fHostPort, err)
-			time.Sleep(time.Second * 5)
-		} else {
-			Log.Printf("connecting to '%s'", fHostPort)
-			return conn // a net.Conn implements io.Reader
-		}
 	}
-	return nil
+
+	mb.FinalFlush()
+
+	close(publishChan)
+	
+	Log.Printf(" ---- acceptMsg, clean shutdown\n")
 }
 
-func publishMsgBundles(ch <-chan []*adsb.CompositeMsg) {
+func publishMsgBundles(thisGoroutineWG *sync.WaitGroup, ch <-chan []*adsb.CompositeMsg) {
+	thisGoroutineWG.Add(1)
+
 	c := pubsub.GetLocalContext(fProjectName)
 	wg := &sync.WaitGroup{}
-
+	
 	for msgs := range ch {
+		if len(msgs) == 0 { continue }
+
 		wg.Add(1)
 
 		go func(msgs []*adsb.CompositeMsg) {
@@ -121,38 +131,50 @@ func publishMsgBundles(ch <-chan []*adsb.CompositeMsg) {
 	}
 
 	wg.Wait()
-	Log.Printf(" -- publishMsgBundles, clean shutdown\n")
+	thisGoroutineWG.Done() // Tell the master-controller that we're all finished
+	Log.Printf(" ---- publishMsgBundles, clean shutdown\n")
 }
 
-func main() {
-	adsb.TimeLocation = fDump1090TimeLocation  // We should really autodetect this, somehow
-
-	// The message buffer will flush out bundles of messages to this channel
-	ch := make(chan []*adsb.CompositeMsg, 3)
-	go publishMsgBundles(ch)
-
-	mb := msgbuffer.NewMsgBuffer()
-	mb.FlushChannel = ch
-	mb.MaxMessageAge = fBufferMaxAge
-	mb.MinPublishInterval = fBufferMinPublish
-
+// readMsgFromSocket will pull basestation (and extended basestation)
+// formatted messages from the socket, and send them down the channel.
+// It will retry the connection on failure.
+func readMsgFromSocket(wg *sync.WaitGroup, hostport string, msgChan chan<-*adsb.Msg) {
 	nTimeMismatches := 0
-	
+	lastBackoff := time.Second
+
+	wg.Add(1)
+
 outerLoop:
 	for {
-		scanner := bufio.NewScanner(getIoReader())
-		for scanner.Scan() {
+		if weAreDone() { break } // outer
+
+		conn,err := net.Dial("tcp", hostport)
+		if err != nil {
+			Log.Printf("connect '%s': err %s; trying again in %s ...", hostport, err, lastBackoff*2)
+			time.Sleep(lastBackoff)
+			if lastBackoff < time.Minute*5 { lastBackoff *= 2 }
+			continue
+		}
+		
+		lastBackoff = time.Second
+		Log.Printf("connected to '%s'", hostport)
+
+		// a net.Conn implements io.Reader
+		scanner := bufio.NewScanner(conn)
+		for scanner.Scan() { // This can block indefinitely ...
+			if weAreDone() { break outerLoop }
+
 			if err := scanner.Err(); err != nil {
-				Log.Printf("scanner err (will retry): %v\n", err)
-				time.Sleep(time.Second * 10)
-				continue outerLoop
+				Log.Printf("killing connection, scanner err: %v\n", err)
+				conn.Close()
+				break // inner
 			}
 
 			msg := adsb.Msg{}
 			text := scanner.Text()
 			if err := msg.FromSBS1(text); err != nil {
-				Log.Printf("SBS parse fail '%v', input:%q", err, text)
-				continue
+				Log.Printf("killing connection, SBS  input:%q, parse fail: %v", text, err)
+				break // inner
 			}
 
 			// If there is significant clock skew, we should bail. But, it seems
@@ -162,22 +184,44 @@ outerLoop:
 			if offset > time.Minute * 30 || offset < time.Minute * -30 {
 				nTimeMismatches++
 				if nTimeMismatches < 100 {
-					continue
+					continue // do not process this message
 				} else {
 					Log.Fatalf("100 bad msgs; set -timeloc ?\nNow = %s\nmsg = %s\n", time.Now(),
 						msg.GeneratedTimestampUTC)
 				}
 			}
-
-			mb.Add(&msg)
-
-			if weAreDone() { break outerLoop}
+			
+			msgChan <- &msg
 		}
-		Log.Print("Scanner died, starting another in 5s ...")
-		time.Sleep(time.Second * 5)
 	}
 
-	mb.FinalFlush()
-	time.Sleep(5 * time.Second)
-	Log.Print("Final clean shutdown")
+	wg.Done()
+	Log.Printf(" ---- readMsgFromSocket, clean shutdown\n")
+}
+
+func main() {
+	adsb.TimeLocation = fDump1090TimeLocation  // We should really autodetect this, somehow
+
+	// For clean shutdown, we need to know when various goroutines finish cleanly
+	readersWaitgroup := &sync.WaitGroup{}
+	publisherWG := &sync.WaitGroup{}
+
+	// Setup the channel for new messages, and launch goroutines to write to it
+	msgChan := make(chan *adsb.Msg, 20)
+	for _,hostport := range strings.Split(fHostPorts, ",") {
+		go readMsgFromSocket(readersWaitgroup, hostport, msgChan)
+	}
+
+	// Setup the channel for publishing outbound bundles of messages, and launch its goroutines
+	publishChan := make(chan []*adsb.CompositeMsg, 3)
+	go acceptMsg(msgChan, publishChan)
+	go publishMsgBundles(publisherWG, publishChan)
+
+	// Now wait until all the readers have closed down.
+	<-done
+	readersWaitgroup.Wait()
+	close(msgChan) // Closing this triggers the publish chain to shutdown
+	publisherWG.Wait()
+
+	Log.Print(" ---- main, clean shutdown completed")
 }

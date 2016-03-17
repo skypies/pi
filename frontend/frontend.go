@@ -17,9 +17,7 @@ import (
 )
 
 func init() {
-	http.HandleFunc("/text", nowHandler)
-	http.HandleFunc("/json", nowJsonHandler)
-	http.HandleFunc("/", nowMapHandler)
+	http.HandleFunc("/", rootHandler)
 }
 
 var(
@@ -48,53 +46,38 @@ func getAirspaceForDisplay(c context.Context) (airspace.Airspace, error) {
 	return a,nil
 }
 
-func nowHandler(w http.ResponseWriter, r *http.Request) {
-	c := appengine.NewContext(r)
-	a,err := getAirspaceForDisplay(c)
-	if err != nil {
-		w.Write([]byte(fmt.Sprintf("not OK: fetch fail: %v\n", err)))
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(fmt.Sprintf("OK\n * Airspace\n%s\n", a)))
-}
-
 func buildLegend() string {
 	legend := date.NowInPdt().Format("15:04:05 MST (2006/01/02)")
 	return legend
 }
 
-func nowJsonHandler(w http.ResponseWriter, r *http.Request) {
-	c := appengine.NewContext(r)
-
-	a,err := getAirspaceForDisplay(c)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	data,err := json.Marshal(a)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
-}
-
-func nowMapHandler(w http.ResponseWriter, r *http.Request) {
+func rootHandler(w http.ResponseWriter, r *http.Request) {	
 	c := appengine.NewContext(r)
 	a,err := getAirspaceForDisplay(c)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}	
+
+	if r.FormValue("json") != "" {
+		data,err := json.Marshal(a)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(data)
+		return
+
+	} else if r.FormValue("text") != "" {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte(fmt.Sprintf("OK\n * Airspace\n%s\n", a)))
+		return
 	}
-	
+
 	var params = map[string]interface{}{
 		"Legend": buildLegend(),
-		"AircraftJS": a.ToJSVar(),
+		"AircraftJS": a.ToJSVar(r.URL.Host),
 		"MapsAPIKey": "",
 		"Center": sfo.KFixes["EPICK"],
 		"Zoom": 8,

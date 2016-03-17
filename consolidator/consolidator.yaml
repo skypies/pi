@@ -16,7 +16,9 @@ resources:
 handlers:
 - url: /_ah/start
   script: _go_app
-- url: /now
-  script: _go_app
 - url: /
+  script: _go_app
+- url: /status
+  script: _go_app
+- url: /reset
   script: _go_app

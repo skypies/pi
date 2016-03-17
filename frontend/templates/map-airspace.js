@@ -11,22 +11,29 @@ function localOverlay() {
 
     for (var i in aircraft) {
         var a = aircraft[i]
-        var infostring =
-            '<div><b><a target="_blank" href="'+a.fdburl+'">'+a.callsign+'</a></b><br/>'+
+        var header = '<div><b>'+a.callsign+'</b><br/>'
+
+        if (a.fdburl) {
+            header = '<div><b><a target="_blank" href="'+a.fdburl+'">'+a.callsign+'</a></b><br/>'+
             '[<a target="_blank" href="'+a.faurl+'">FA</a>,'+
             ' <a target="_blank" href="'+a.fdburl+'&fr24=1">ADSB+fr24</a>,'+
             ' <a target="_blank" href="'+a.approachurl+'">ApproachGraph</a>'+
-            ']<br/>'+
+                ']<br/>'
+        } else {
+            header += '[<a target="_blank" href="'+a.faurl+'">FlightAware</a>]<br/>'
+        }
+
+        var infostring = header +
             'Icao24: '+a.icao24+'<br/>'+
             '  -- Registration: '+a.reg+'<br/>'+
             '  -- IcaoPrefix: '+a.icao+'<br/>'+
             '  -- Equipment: '+a.equip+'<br/>'+
-            'Altitude: '+a.alt+' feet<br/>'+
-            'Speed: '+a.speed+' knots<br/>'+
+            'PressureAltitude: '+a.alt+' feet<br/>'+
+            'GroundSpeed: '+a.speed+' knots<br/>'+
             'Heading: '+a.heading+' degrees<br/>'+
             'Position: ('+a.pos.lat+','+a.pos.lng+')<br/>'+
             'Last seen: '+a.age+' seconds ago<br/>'+
-            'Source: '+a.source+' / '+a.receiver+'<br/>'
+            'Source: '+a.source+' / '+a.receiver+' ('+ a.system+')<br/>'+
             '</div>';
 
         var marker = new google.maps.Marker({

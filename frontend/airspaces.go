@@ -180,7 +180,7 @@ func compHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		var params = map[string]interface{}{
 			"Legend": buildLegend(),
-			"AircraftJS": as.ToJSVar(),
+			"AircraftJS": as.ToJSVar(r.URL.Host),
 			"MapsAPIKey": "",
 			"Center": sfo.KFixes["EPICK"],
 			//"Center": sfo.KFixes["EDDYY"],

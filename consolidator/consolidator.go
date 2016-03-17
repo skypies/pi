@@ -9,7 +9,7 @@
 //   $ aedeploy gcloud preview app deploy ./index.yaml --promote --bucket gs://gcloud-arse
 
 // You can it also run it locally, without interfering with the prod subscriptions:
-//   $ go run consolidator.go -ae=false
+//   $ go run consolidator.go -ae=false -input=testing
 
 package main
 
@@ -73,6 +73,7 @@ func init() {
 	flag.Parse()
 
 	http.HandleFunc("/", statusHandler)
+	http.HandleFunc("/status", statusHandler)
 	http.HandleFunc("/reset", resetHandler)
 	http.HandleFunc("/_ah/start", startHandler)
 	http.HandleFunc("/_ah/stop", stopHandler)
@@ -91,7 +92,7 @@ func setup(ctx context.Context) {
 		fPubsubSubscription += "DEV"
 		pubsub.Setup(ctx, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
 		pubsub.DeleteSub(ctx, fPubsubSubscription)
-		pubsub.CreateSub(ctx, fPubsubSubscription, "adsb-inbound")
+		pubsub.CreateSub(ctx, fPubsubSubscription, fPubsubInputTopic)
 	}
 
 	Log.Printf("(setup)\n")
@@ -127,10 +128,10 @@ func flushTrackToDatastore(msgs []*adsb.CompositeMsg) {
 	if len(msgs) == 0 {
 		return
 	}
-	frag := fdb.MessagesToADSBTrackFragment(msgs)
+	frag := fdb.MessagesToTrackFragment(msgs)
 	db := fgae.FlightDB{C:appengine.BackgroundContext()}
 
-	if err := db.AddADSBTrackFragment(frag); err != nil {
+	if err := db.AddTrackFragment(frag); err != nil {
 		Log.Printf("flushPost/ToDatastore: %v\n", err)
 	}
 }
@@ -412,8 +413,8 @@ func weAreDone() bool {
 func main() {
 	Log.Printf("(main)\n")
 
-	// If we're on appengine, use their special background context; else
-	// we can't talk to appengine services such as Memcache. If we're
+	// If we're on appengine, use their special background context; we
+	// need it to talk to appengine services such as Memcache. If we're
 	// not on appengine, https://metadata/ won't exist and so we can't
 	// use the appengine context; but any old context will do.
 	ctx := context.TODO()

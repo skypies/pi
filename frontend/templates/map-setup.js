@@ -69,6 +69,14 @@ var waypoints = {
     "ANJEE": {pos:{lat: 36.7462861, lng: -121.9648917}},
     "SKUNK": {pos:{lat: 37.0075944, lng: -122.0332278}},
     "BOLDR": {pos:{lat: 37.1708861, lng: -122.0761667}},       
+
+    // Things for SILCN3
+    "X_RSH": {pos:{lat: 36.868582, lng: -121.691934}},
+    "VLLEY": {pos:{lat: 36.5091667, lng:-121.4402778}},
+    "GUUYY": {pos:{lat: 36.7394444, lng:-121.5411111}},
+    "SSEBB": {pos:{lat: 36.9788889, lng:-121.6425000}},
+    "GSTEE": {pos:{lat: 37.0708333, lng:-121.6716667}},
+    "KLIDE": {pos:{lat: 37.1641667, lng:-121.7130556}},
 }
 
 function pathsOverlay() {

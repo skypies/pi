@@ -8,5 +8,9 @@ instance_class: F1
 handlers:
 - url: /static
   static_dir: static
-- url: /.*
+- url: /
+  script: _go_app
+- url: /comp
+  script: _go_app
+- url: /json
   script: _go_app
