@@ -161,8 +161,10 @@ func compHandler(w http.ResponseWriter, r *http.Request) {
 	deb := fr24ToAirspace(c, &as)
 	str += "**fr24**\n"+deb
 
-	deb = faToAirspace(c, &as)
-	str += "\n**fa**\n"+deb
+	if r.FormValue("fa") != "" {
+		deb = faToAirspace(c, &as)
+		str += "\n**fa**\n"+deb
+	}
 	
 	str += fmt.Sprintf("\n** * everything ****\n\n%s", as)
 
@@ -182,9 +184,8 @@ func compHandler(w http.ResponseWriter, r *http.Request) {
 			"Legend": buildLegend(),
 			"AircraftJS": as.ToJSVar(r.URL.Host),
 			"MapsAPIKey": "",
-			"Center": sfo.KFixes["EPICK"],
-			//"Center": sfo.KFixes["EDDYY"],
-			"Zoom": 8,
+			"Center": sfo.KFixes["YADUT"],
+			"Zoom": 9,
 		}
 
 		if err := templates.ExecuteTemplate(w, "airspace-map", params); err != nil {

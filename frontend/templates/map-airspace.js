@@ -11,10 +11,16 @@ function localOverlay() {
 
     for (var i in aircraft) {
         var a = aircraft[i]
-        var header = '<div><b>'+a.callsign+'</b><br/>'
 
+        var ident = a.callsign
+        if (!ident) {
+            ident = a.reg
+        }
+
+        var header = '<div><b>'+ident+'</b><br/>'
+        
         if (a.fdburl) {
-            header = '<div><b><a target="_blank" href="'+a.fdburl+'">'+a.callsign+'</a></b><br/>'+
+            header = '<div><b><a target="_blank" href="'+a.fdburl+'">'+ident+'</a></b><br/>'+
             '[<a target="_blank" href="'+a.faurl+'">FA</a>,'+
             ' <a target="_blank" href="'+a.fdburl+'&fr24=1">ADSB+fr24</a>,'+
             ' <a target="_blank" href="'+a.approachurl+'">ApproachGraph</a>'+
@@ -24,6 +30,7 @@ function localOverlay() {
         }
 
         var infostring = header +
+            'Callsign: '+a.callsign+'<br/>'+
             'Icao24: '+a.icao24+'<br/>'+
             '  -- Registration: '+a.reg+'<br/>'+
             '  -- IcaoPrefix: '+a.icao+'<br/>'+
@@ -36,10 +43,16 @@ function localOverlay() {
             'Source: '+a.source+' / '+a.receiver+' ('+ a.system+')<br/>'+
             '</div>';
 
+        var zDepth = 3000;
+        if (a.source == "fr24") {
+            zDepth = 2000;
+        }
+        
         var marker = new google.maps.Marker({
             title: a.callsign,
             html: infostring,
             position: a.pos,
+            zIndex: zDepth,
             icon: {
                 path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
                 scale: 3,

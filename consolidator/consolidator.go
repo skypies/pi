@@ -128,6 +128,10 @@ func flushTrackToDatastore(msgs []*adsb.CompositeMsg) {
 	if len(msgs) == 0 {
 		return
 	}
+
+	// For now, don't persist any MLAT data
+	// :O   if msgs[0].DataSystem() != "ADSB" { return }
+
 	frag := fdb.MessagesToTrackFragment(msgs)
 	db := fgae.FlightDB{C:appengine.BackgroundContext()}
 

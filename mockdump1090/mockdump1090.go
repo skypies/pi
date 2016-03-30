@@ -36,6 +36,8 @@ func init() {
 
 	replayFiles = strings.Split(replay, ",")
 	for _,id := range strings.Split(wlist, ",") {
+		if id == "" { continue }
+		fmt.Printf("(whitelisting icaoid '%s')\n", id)
 		icaoWhitelist[id] = 1
 	}
 }

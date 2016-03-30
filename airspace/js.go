@@ -22,7 +22,7 @@ func (ad AircraftData)ToJSString(host string) string {
 	faUrl := fmt.Sprintf("http://flightaware.com/live/flight/%s", m.Callsign)
 	
 	color := "#0033ff"
-	if m.DataSystem() == "MLAT" { color = "#3377ff" }
+	if m.DataSystem() == "MLAT" { color = "#508aff" }
 
 	if ad.Source == "fa" { color = "#ff3300" }
 	if ad.Source == "fr24" { color = "#00ff33" }

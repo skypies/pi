@@ -77,6 +77,8 @@ var waypoints = {
     "SSEBB": {pos:{lat: 36.9788889, lng:-121.6425000}},
     "GSTEE": {pos:{lat: 37.0708333, lng:-121.6716667}},
     "KLIDE": {pos:{lat: 37.1641667, lng:-121.7130556}},
+    "BAXBE": {pos:{lat: 36.7730556, lng:-121.6263889}},
+    "APLLE": {pos:{lat: 37.0338889, lng:-121.8050000}}
 }
 
 function pathsOverlay() {

@@ -79,8 +79,8 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
 		"Legend": buildLegend(),
 		"AircraftJS": a.ToJSVar(r.URL.Host),
 		"MapsAPIKey": "",
-		"Center": sfo.KFixes["EPICK"],
-		"Zoom": 8,
+			"Center": sfo.KFixes["YADUT"],
+			"Zoom": 9,
 	}
 
 	if err := templates.ExecuteTemplate(w, "airspace-map", params); err != nil {
