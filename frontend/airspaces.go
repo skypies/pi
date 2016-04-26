@@ -87,6 +87,11 @@ func snapshot2AircraftData(fs fdb.FlightSnapshot, id adsb.IcaoId) airspace.Aircr
 
 // {{{ faToAirspace
 
+var(
+	TestAPIKey = "foo"
+	TestAPIUsername = "bar"
+)
+
 // Overlays the flightaware 'Search' results into the airspace
 func faToAirspace(c context.Context, as *airspace.Airspace) string {
 	str := ""

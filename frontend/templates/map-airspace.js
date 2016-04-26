@@ -12,7 +12,10 @@ function localOverlay() {
     for (var i in aircraft) {
         var a = aircraft[i]
 
-        var ident = a.callsign
+        var ident = a.flightnumber
+        if (!ident) {
+            ident = a.callsign
+        }
         if (!ident) {
             ident = a.reg
         }
@@ -23,13 +26,15 @@ function localOverlay() {
             header = '<div><b><a target="_blank" href="'+a.fdburl+'">'+ident+'</a></b><br/>'+
             '[<a target="_blank" href="'+a.faurl+'">FA</a>,'+
             ' <a target="_blank" href="'+a.fdburl+'&fr24=1">ADSB+fr24</a>,'+
-            ' <a target="_blank" href="'+a.approachurl+'">ApproachGraph</a>'+
+            ' <a target="_blank" href="'+a.approachurl+'">DescentGraph</a>'+
                 ']<br/>'
         } else {
             header += '[<a target="_blank" href="'+a.faurl+'">FlightAware</a>]<br/>'
         }
 
         var infostring = header +
+            'FlightNumber: '+a.flightnumber+'<br/>'+
+            'Schedule: '+a.orig+" - "+a.dest+'<br/>'+
             'Callsign: '+a.callsign+'<br/>'+
             'Icao24: '+a.icao24+'<br/>'+
             '  -- Registration: '+a.reg+'<br/>'+
@@ -49,7 +54,7 @@ function localOverlay() {
         }
         
         var marker = new google.maps.Marker({
-            title: a.callsign,
+            title: ident,
             html: infostring,
             position: a.pos,
             zIndex: zDepth,

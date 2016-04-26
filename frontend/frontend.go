@@ -22,9 +22,10 @@ func init() {
 
 var(
 	kMaxStaleDuration = time.Second * 30
+	kMaxStaleScheduleDuration = time.Minute * 20
 )
 
-// We tart it up with airframe data, and trim out stale entries
+// We tart it up with airframe and schedule data, and trim out stale entries
 func getAirspaceForDisplay(c context.Context) (airspace.Airspace, error) {
 	a := airspace.Airspace{}
 	if err := a.JustAircraftFromMemcache(c); err != nil {
@@ -32,14 +33,24 @@ func getAirspaceForDisplay(c context.Context) (airspace.Airspace, error) {
 	}
 
 	airframes := ref.NewAirframeCache(c)
+	schedules := ref.NewScheduleCache(c)
 	for k,aircraft := range a.Aircraft {
 		age := time.Since(a.Aircraft[k].Msg.GeneratedTimestampUTC)
 		if age > kMaxStaleDuration {
 			delete(a.Aircraft, k)
-		} else if af := airframes.Get(string(k)); af != nil {
+			continue
+		}
+		if af := airframes.Get(string(k)); af != nil {
 			// Update entry in map to include the airframe data we just found
 			aircraft.Airframe = *af
 			a.Aircraft[k] = aircraft
+		}
+
+		if schedules != nil && time.Since(schedules.LastUpdated) < kMaxStaleScheduleDuration {
+			if fs := schedules.Get(string(k)); fs != nil {
+				aircraft.Schedule = fs.Identity.Schedule
+				a.Aircraft[k] = aircraft
+			}
 		}
 	}
 

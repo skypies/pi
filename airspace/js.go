@@ -16,7 +16,7 @@ func (ad AircraftData)ToJSString(host string) string {
 	//approachUrl := fmt.Sprintf("http://%s/fdb/approach?idspec=%s", host, idSpec)
 
 	fdbUrl      := fmt.Sprintf("/fdb/tracks?idspec=%s", idSpec)
-	approachUrl := fmt.Sprintf("/fdb/approach?idspec=%s", idSpec)
+	approachUrl := fmt.Sprintf("/fdb/descent?idspec=%s", idSpec)
 	if host == "airspace.serfr1.org" { fdbUrl,approachUrl = "","" } // Bleargh
 
 	faUrl := fmt.Sprintf("http://flightaware.com/live/flight/%s", m.Callsign)
@@ -28,10 +28,12 @@ func (ad AircraftData)ToJSString(host string) string {
 	if ad.Source == "fr24" { color = "#00ff33" }
 
 	return fmt.Sprintf("receiver:\"%s\", callsign:%q, icao24:%q, reg:%q, equip:%q, icao:%q, "+
+		"flightnumber:%q, orig:%q, dest:%q, " +	
 		"pos:{lat:%.6f,lng:%.6f}, alt:%d, heading:%d, speed:%d, vertspeed:%d, "+
 		"squawk:%q, faurl:%q, fdburl:%q, approachurl:%q, idspec:%q, age:%.0f, source:%q, system:%q, "+
 		"color:%q",
 		m.ReceiverName, m.Callsign, m.Icao24, ad.Registration, ad.EquipmentType, ad.CallsignPrefix,
+		ad.Schedule.BestFlightNumber(), ad.Schedule.Origin, ad.Schedule.Destination,
 		m.Position.Lat, m.Position.Long, m.Altitude, m.Track, m.GroundSpeed, m.VerticalRate,
 		m.Squawk, faUrl, fdbUrl, approachUrl, idSpec,
 		time.Since(m.GeneratedTimestampUTC).Seconds(),
