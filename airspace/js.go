@@ -6,9 +6,9 @@ import (
 	"time"
 )
 
-func (ad AircraftData)ToJSString(host string) string {
+func (ad AircraftData)ToJSString(host string, t time.Time) string {
 	m := ad.Msg	
-	idSpec := fmt.Sprintf("%s@%d", string(m.Icao24), time.Now().Add(-30 * time.Second).Unix())
+	idSpec := fmt.Sprintf("%s@%d", string(m.Icao24), t.Unix())
 
 	//host := "ui-dot-serfr0-fdb.appspot.com"
 	//host := "fdb.serfr1.org"
@@ -40,10 +40,10 @@ func (ad AircraftData)ToJSString(host string) string {
 		ad.Source, m.DataSystem(), color)
 }
 
-func (a *Airspace)ToJSVar(host string) template.JS {
+func (a *Airspace)ToJSVar(host string, t time.Time) template.JS {
 	str := "{\n"
 	for i,ad := range a.Aircraft {
-		str += fmt.Sprintf("    %q: {%s},\n", i, ad.ToJSString(host))
+		str += fmt.Sprintf("    %q: {%s},\n", i, ad.ToJSString(host, t))
 	}
 	str += "  }"
 	return template.JS(str)

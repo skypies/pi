@@ -36,6 +36,20 @@ type Airspace struct {
 	Aircraft map[adsb.IcaoId]AircraftData  // "what is in the sky right now"; for realtime serving
 }
 
+// {{{ NewAirspace
+
+func NewAirspace() Airspace {
+	return Airspace{
+		Signatures: Signatures{
+			CurrMsgs: map[adsb.Signature]bool{},
+			PrevMsgs: map[adsb.Signature]bool{},
+		},
+		Aircraft: map[adsb.IcaoId]AircraftData{},
+	}
+}
+
+// }}}
+
 // {{{ a.rollMsgs
 
 func (a *Airspace)rollMsgs() {

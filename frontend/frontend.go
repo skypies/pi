@@ -88,10 +88,10 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
 
 	var params = map[string]interface{}{
 		"Legend": buildLegend(),
-		"AircraftJS": a.ToJSVar(r.URL.Host),
+		"AircraftJS": as.ToJSVar(r.URL.Host, time.Now().Add(-30 * time.Second)),
 		"MapsAPIKey": "",
-			"Center": sfo.KFixes["YADUT"],
-			"Zoom": 9,
+		"Center": sfo.KFixes["YADUT"],
+		"Zoom": 9,
 	}
 
 	if err := templates.ExecuteTemplate(w, "airspace-map", params); err != nil {
