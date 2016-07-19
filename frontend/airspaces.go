@@ -123,7 +123,7 @@ func fr24ToAirspace(c context.Context, as *airspace.Airspace) string {
 	str := ""
 
 	fr,_ := fr24.NewFr24(urlfetch.Client(c))
-	snapshots,err := fr.LookupCurrentList(sfo.KLatlongSFO.Box(250,250))
+	snapshots,err := fr.LookupCurrentList(sfo.KAirports["SFO"].Box(250,250))
 	if err != nil {
 		str += fmt.Sprintf("fr24/Current: err: %v\n", err)
 		return str
@@ -153,7 +153,7 @@ func fr24ToAirspace(c context.Context, as *airspace.Airspace) string {
 // Compare various realtime views of the airspace
 func compHandler(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-	as,err := getAirspaceForDisplay(c)
+	as,err := getAirspaceForDisplay(c, sfo.KAirports["KSFO"].Box(250,250))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

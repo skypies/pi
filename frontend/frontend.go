@@ -10,6 +10,7 @@ import (
 	"google.golang.org/appengine"
 
 	"github.com/skypies/util/date"
+	"github.com/skypies/geo"
 	"github.com/skypies/geo/sfo"
 	"github.com/skypies/pi/airspace"
 
@@ -25,8 +26,8 @@ var(
 	kMaxStaleScheduleDuration = time.Minute * 20
 )
 
-// We tart it up with airframe and schedule data, and trim out stale entries
-func getAirspaceForDisplay(c context.Context) (airspace.Airspace, error) {
+// We tart it up with airframe and schedule data, trim out stale entries, and trim to fit box
+func getAirspaceForDisplay(c context.Context, bbox geo.LatlongBox) (airspace.Airspace, error) {
 	a := airspace.Airspace{}
 	if err := a.JustAircraftFromMemcache(c); err != nil {
 		return a,err
@@ -37,6 +38,10 @@ func getAirspaceForDisplay(c context.Context) (airspace.Airspace, error) {
 	for k,aircraft := range a.Aircraft {
 		age := time.Since(a.Aircraft[k].Msg.GeneratedTimestampUTC)
 		if age > kMaxStaleDuration {
+			delete(a.Aircraft, k)
+			continue
+		}
+		if !bbox.SW.IsNil() && !bbox.Contains(aircraft.Msg.Position) {
 			delete(a.Aircraft, k)
 			continue
 		}
@@ -62,9 +67,10 @@ func buildLegend() string {
 	return legend
 }
 
+// /?json=1&box_sw_lat=36.1&box_sw_long=-122.2&box_ne_lat=37.1&box_ne_long=-121.5
 func rootHandler(w http.ResponseWriter, r *http.Request) {	
 	c := appengine.NewContext(r)
-	a,err := getAirspaceForDisplay(c)
+	a,err := getAirspaceForDisplay(c, geo.FormValueLatlongBox(r, "box"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -88,7 +94,7 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
 
 	var params = map[string]interface{}{
 		"Legend": buildLegend(),
-		"AircraftJS": as.ToJSVar(r.URL.Host, time.Now().Add(-30 * time.Second)),
+		"AircraftJS": a.ToJSVar(r.URL.Host, time.Now().Add(-30 * time.Second)),
 		"MapsAPIKey": "",
 		"Center": sfo.KFixes["YADUT"],
 		"Zoom": 9,
