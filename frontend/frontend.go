@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"time"
 	
@@ -69,29 +68,26 @@ func buildLegend() string {
 
 // /?json=1&box_sw_lat=36.1&box_sw_long=-122.2&box_ne_lat=37.1&box_ne_long=-121.5
 func rootHandler(w http.ResponseWriter, r *http.Request) {	
-	c := appengine.NewContext(r)
-	a,err := getAirspaceForDisplay(c, geo.FormValueLatlongBox(r, "box"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}	
-
 	if r.FormValue("json") != "" {
-		data,err := json.Marshal(a)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(data)
-		return
-
-	} else if r.FormValue("text") != "" {
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte(fmt.Sprintf("OK\n * Airspace\n%s\n", a)))
+		jsonOutputHandler(w,r)
 		return
 	}
+//	} else if r.FormValue("text") != "" {
+//		w.Header().Set("Content-Type", "text/plain")
+//		w.Write([]byte(fmt.Sprintf("OK\n * Airspace\n%s\n", a)))
+//		return
 
+	var params = map[string]interface{}{
+		"MapsAPIKey": "",
+		"Center": sfo.KFixes["YADUT"],
+		"Zoom": 9,
+		"URLToPoll": "http://fdb.serfr1.org/?json=1",
+	}
+
+	if err := templates.ExecuteTemplate(w, "airspace-map-poller", params); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+/*
 	var params = map[string]interface{}{
 		"Legend": buildLegend(),
 		"AircraftJS": a.ToJSVar(r.URL.Host, time.Now().Add(-30 * time.Second)),
@@ -103,4 +99,30 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
 	if err := templates.ExecuteTemplate(w, "airspace-map", params); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+*/
+}
+
+func jsonOutputHandler(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)	
+	a,err := getAirspaceForDisplay(c, geo.FormValueLatlongBox(r, "box"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Temporary hack, to let goapp serve'd things call the deployed version of this URL
+	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:8080")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+	w.Header().Set("Access-Control-Allow-Headers",
+		"Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+	data,err := json.MarshalIndent(a, "", "  ")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
+	return
 }

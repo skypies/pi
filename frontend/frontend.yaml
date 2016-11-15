@@ -14,3 +14,6 @@ handlers:
   script: _go_app
 - url: /json
   script: _go_app
+
+- url: /poll
+  script: _go_app

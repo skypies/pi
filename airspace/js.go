@@ -7,7 +7,7 @@ import (
 )
 
 func (ad AircraftData)ToJSString(host string, t time.Time) string {
-	m := ad.Msg	
+	m := ad.Msg
 	idSpec := fmt.Sprintf("%s@%d", string(m.Icao24), t.Unix())
 
 	//host := "ui-dot-serfr0-fdb.appspot.com"

@@ -1,0 +1,19 @@
+{{define "airspace-map-poller"}}
+
+<html>
+  {{template "header-map-poller"}}
+  <body>
+    <div id="map"></div>
+    <div id="legend"></div>
+    <div id="details"></div>
+    <script type="text/javascript">
+      {{template "js-map-poller-setup" . }}
+      {{template "js-map-poller-airspace" . }}
+    </script>
+    <script async defer
+      src="https://maps.googleapis.com/maps/api/js?key={{.MapsAPIKey}}&callback=initMap">
+    </script>
+  </body>
+</html>
+
+{{end}}
