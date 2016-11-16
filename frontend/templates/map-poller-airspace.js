@@ -12,7 +12,7 @@ function paintBox(name, htmlFrag) {
     box.appendChild(div);
 
 }
-function paintDebug(htmlFrag)  { paintBox('details', htmlFrag) }
+function paintDetails(htmlFrag)  { paintBox('details', htmlFrag) }
 function paintLegend(htmlFrag) {
     paintBox('legend',  htmlFrag)
     attachOnClicksToBoxText()
@@ -34,20 +34,22 @@ var poll2 = (promiseFn, time) => promiseFn().then(
              sleep2(time).then(() => poll2(promiseFn, time)))
 //poll(() => new Promise(() => console.log('Hello World!')), 1000)
 
-var gPollingIntervalMillis = 5000;
-var gMaxPollsRemain = 360;  // 30m
+var gPollingIntervalMillis = 2000;
+var gMaxPollsRemain = (60000/gPollingIntervalMillis)*30;  // 30m
 var gPollsRemain = gMaxPollsRemain;
 
 function pollingOverlay() {
     paintLegend( generateLegend() )
     infowindow = new google.maps.InfoWindow({ content: "holding..." });
+    paintSearchBox()
     // Start polling ...
 
     poll2(() => new Promise(() => pollAndPaint( {{.URLToPoll}} )), gPollingIntervalMillis)
 }
 
-var gAircraft = {};       // Current marker objects for all live aircraft (keyed on icaoID)
-var gExpiredAircraft = {}; // Expired (red) markers kept for all eternity (keyed on icaoID)
+var gAircraft = {};         // Current marker objects for all live aircraft (keyed on icaoID)
+var gExpiredAircraft = {};  // Expired (red) markers kept for all eternity (keyed on icaoID)
+var gInfowindowIcao24 = ""; // The ID of the aircraft which was last rendered into the infowindow
 
 var gPollingPaused = false;
 function togglePolling() {
@@ -61,14 +63,14 @@ function togglePolling() {
 }
 
 function generateLegend() {
-    legend = '<a href="#" id="toggle">Polling</a>: '
-    if (gPollingPaused) { legend += "off" }
-    else                { legend += "on" }
+    var legend = ''
+    if (gPollingPaused) { legend += '[<a href="#" id="toggle">Resume polling</a>]' }
+    else                { legend += "<i>(Polling active)</i>" }
 
     var now = new Date();
     var tstamp = now.toTimeString()
     
-    return "["+legend+"] "+tstamp
+    return legend+" "+tstamp
 }
 
 function pollAndPaint(url) {
@@ -94,7 +96,7 @@ function pollAndPaint(url) {
             }
         });
         expireAircraft(liveAircraft);
-        // paintDebug("live: "+Object.keys(liveAircraft).length+
+        // paintDetails("live: "+Object.keys(liveAircraft).length+
         //           ", prev: "+Object.keys(gAircraft).length)
     });
 }    
@@ -158,9 +160,9 @@ function paintAircraft(a) {
     if (!ident) {
         ident = a.Registration
     }
-    var header = '<div><b>'+ident+'</b><br/>';
+    var header = '<b>'+ident+'</b><br/>';
     if (a.X_UrlSkypi) {
-        header = '<div><b><a target="_blank" href="'+a.X_UrlSkypi+'">'+ident+'</a></b> '+
+        header = '<b><a target="_blank" href="'+a.X_UrlSkypi+'">'+ident+'</a></b> '+
             '[<a target="_blank" href="'+a.X_UrlFA+'">FA</a>,'+
             ' <a target="_blank" href="'+a.X_UrlFR24+'">FR24</a>,'+
             ' <a target="_blank" href="'+a.X_UrlDescent+'">Descent</a>'+
@@ -181,8 +183,10 @@ function paintAircraft(a) {
         'Position: ('+a.Msg.Position.Lat+','+a.Msg.Position.Long+')<br/>'+
         // 'Last seen: ('+a.X_AgeSecs+'s ago) '+a.Msg.GeneratedTimestampUTC+'<br/>'+
         'Last seen: '+a.Msg.GeneratedTimestampUTC+'<br/>'+
-        'Source: '+a.Source+'/'+a.Msg.ReceiverName+' ('+ a.X_DataSystem+')<br/>'+
-        '</div>';
+        'Source: '+a.Source+'/'+a.Msg.ReceiverName+' ('+ a.X_DataSystem+')<br/>';
+
+    infostring = '<div id="infowindow">'+infostring+'</div>'
+    
     var zDepth = 3000;
     if (a.Source == "fr24") { zDepth = 2000 }
     var color = "#0033ff"; // SkyPi/ADSB color
@@ -197,6 +201,7 @@ function paintAircraft(a) {
         // New aircraft - create a fresh marker
         var marker = new google.maps.Marker({
             title: ident,
+            callsign: a.Msg.Callsign,  // This is used for search
             html: infostring,
             position: newpos,
             zIndex: zDepth,
@@ -206,6 +211,7 @@ function paintAircraft(a) {
         marker.addListener('click', function(){
             infowindow.setContent(this.html),
             infowindow.open(map, this);
+            gInfowindowIcao24 = a.Icao24
         });
         gAircraft[a.Icao24] = marker
 
@@ -214,6 +220,10 @@ function paintAircraft(a) {
         oldmarker.setPosition(newpos);
         oldmarker.setIcon(newicon);
         oldmarker.html = infostring;
+        // If the infowindow is currently displaying this aircraft, update it
+        if (gInfowindowIcao24 == a.Icao24) {
+            infowindow.setContent(infostring);
+        }
     }
 }
 
@@ -225,6 +235,41 @@ function arrowicon(color,rotation) {
         strokeWeight: 2,
         rotation: rotation,
     };
+}
+
+// Crappy client-side searchbox. Interates over the markers, looking for one with the same callsign
+function paintSearchBox() {
+    var html = '<div>'+
+        '<form id="srchform">'+
+        '<button type="submit">Search Callsign</button> '+
+        '<input type="text" name="callsign" size="8"/>'+
+        '</form>'+
+        '</div>'
+    paintDetails(html)
+
+    $(function() {
+        $('#srchform').on("submit",function(e) {
+            e.preventDefault(); // cancel the actual submit
+            var callsign = document.getElementById('srchform').elements.callsign.value;
+            document.getElementById('srchform').elements.callsign.value = '';
+            searchAndMaybeHighlight(callsign.toUpperCase());
+        });
+    });
+}
+
+function searchAndMaybeHighlight(callsign) {
+    console.log('Search for "' + callsign + '"');
+    for (k in gAircraft) {
+        var marker = gAircraft[k];
+        if (marker.callsign == callsign) {
+            if (gInfowindowIcao24 != "") {
+                infowindow.close();
+            }
+            infowindow.setContent(marker.html);
+            infowindow.open(map, marker);
+            gInfowindowIcao24 = k
+        }
+    }
 }
 
 {{end}}
