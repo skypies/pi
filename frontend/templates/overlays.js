@@ -1,22 +1,10 @@
-{{define "js-map-setup"}} // Depends on: .Center (geo.Latlong), and .Zoom (int)
-var map;
-function initMap() {
-    map = new google.maps.Map(document.getElementById('map'), {
-        center: {lat: {{.Center.Lat}}, lng: {{.Center.Long}}},
-        mapTypeId: google.maps.MapTypeId.TERRAIN,
-        zoom: {{.Zoom}}
-    });
+{{define "js-overlays"}} // Depends on: .Center (geo.Latlong), and .Zoom (int)
 
-    map.controls[google.maps.ControlPosition.RIGHT_TOP].push(
-        document.getElementById('legend'));
+// Library of some routines that add furniture to the map.
+//   ClassBOverlay();
+//   PathsOverlay();
 
-    classBOverlay()
-    pathsOverlay()
-
-    localOverlay()
-}
-
-function classBOverlay() {
+function ClassBOverlay() {
     var classb = [
 //        { center: {lat:  37.6188172 , lng:  -122.3754281 }, boundaryMeters:  12964 }, //  7NM
 //        { center: {lat:  37.6188172 , lng:  -122.3754281 }, boundaryMeters:  18520 }, // 10NM
@@ -81,7 +69,7 @@ var waypoints = {
     "APLLE": {pos:{lat: 37.0338889, lng:-121.8050000}}
 }
 
-function pathsOverlay() {
+function PathsOverlay() {
     for (var wp in waypoints) {
         var fixCircle = new google.maps.Circle({
             strokeWeight: 2,
