@@ -15,5 +15,5 @@ handlers:
 - url: /json
   script: _go_app
 
-- url: /poll
+- url: /comp2
   script: _go_app

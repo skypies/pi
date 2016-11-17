@@ -8,7 +8,6 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/appengine"
 
-	"github.com/skypies/util/date"
 	"github.com/skypies/geo"
 	"github.com/skypies/geo/sfo"
 	"github.com/skypies/pi/airspace"
@@ -27,7 +26,7 @@ var(
 
 // We tart it up with airframe and schedule data, trim out stale entries, and trim to fit box
 func getAirspaceForDisplay(c context.Context, bbox geo.LatlongBox) (airspace.Airspace, error) {
-	a := airspace.Airspace{}
+	a := airspace.NewAirspace()
 	if err := a.JustAircraftFromMemcache(c); err != nil {
 		return a,err
 	}
@@ -61,55 +60,51 @@ func getAirspaceForDisplay(c context.Context, bbox geo.LatlongBox) (airspace.Air
 	return a,nil
 }
 
-func buildLegend() string {
-	legend := date.NowInPdt().Format("15:04:05 MST (2006/01/02)")
-	return legend
-}
-
 // /?json=1&box_sw_lat=36.1&box_sw_long=-122.2&box_ne_lat=37.1&box_ne_long=-121.5
 func rootHandler(w http.ResponseWriter, r *http.Request) {	
 	if r.FormValue("json") != "" {
 		jsonOutputHandler(w,r)
 		return
 	}
-//	} else if r.FormValue("text") != "" {
-//		w.Header().Set("Content-Type", "text/plain")
-//		w.Write([]byte(fmt.Sprintf("OK\n * Airspace\n%s\n", a)))
-//		return
 
+	url := "http://fdb.serfr1.org/?json=1"
+	if r.FormValue("comp") != "" {
+		url += "&comp=1"
+	}
+		
 	var params = map[string]interface{}{
 		"MapsAPIKey": "",
 		"Center": sfo.KFixes["YADUT"],
 		"Zoom": 9,
-		"URLToPoll": "http://fdb.serfr1.org/?json=1",
+		"URLToPoll": url,
 	}
 
-	if err := templates.ExecuteTemplate(w, "airspace-map-poller", params); err != nil {
+	if err := templates.ExecuteTemplate(w, "map-poller", params); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
-/*
-	var params = map[string]interface{}{
-		"Legend": buildLegend(),
-		"AircraftJS": a.ToJSVar(r.URL.Host, time.Now().Add(-30 * time.Second)),
-		"MapsAPIKey": "",
-		"Center": sfo.KFixes["YADUT"],
-		"Zoom": 9,
-	}
-
-	if err := templates.ExecuteTemplate(w, "airspace-map", params); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-*/
 }
 
 func jsonOutputHandler(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)	
-	a,err := getAirspaceForDisplay(c, geo.FormValueLatlongBox(r, "box"))
+	as,err := getAirspaceForDisplay(c, geo.FormValueLatlongBox(r, "box"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	if r.FormValue("comp") != "" {
+		fr24ToAirspace(c, &as)
+		if r.FormValue("fa") != "" { faToAirspace(c, &as) }
+
+		// Weed out stale stuff (mostly from fa)
+		for k,_ := range as.Aircraft {
+			age := time.Since(as.Aircraft[k].Msg.GeneratedTimestampUTC)
+			if age > kMaxStaleDuration * 2 {
+				delete(as.Aircraft, k)
+			}
+		}
+	}
+	
 	// Temporary hack, to let goapp serve'd things call the deployed version of this URL
 	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:8080")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
@@ -117,12 +112,12 @@ func jsonOutputHandler(w http.ResponseWriter, r *http.Request) {
 		"Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token")
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 
-	data,err := json.MarshalIndent(a, "", "  ")
+	data,err := json.MarshalIndent(as, "", "  ")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(data)
-	return
 }

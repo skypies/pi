@@ -1,16 +1,21 @@
+
 package main
 
 // A handler to compare/contrast various airspaces on top of each other
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
+	"html/template"
 	"time"
 	
 	"golang.org/x/net/context"
 	"google.golang.org/appengine"
 	"google.golang.org/appengine/urlfetch"
 
+	"github.com/skypies/util/date"
 	"github.com/skypies/geo"
 	"github.com/skypies/geo/sfo"
 	"github.com/skypies/adsb"
@@ -24,6 +29,12 @@ import (
 
 func init() {
 	http.HandleFunc("/comp", compHandler)
+	http.HandleFunc("/comp2", compHandler)
+}
+
+func buildLegend() string {
+	legend := date.NowInPdt().Format("15:04:05 MST (2006/01/02)")
+	return legend
 }
 
 // {{{ faFlight2AirspaceAircraft
@@ -74,12 +85,21 @@ func snapshot2AircraftData(fs fdb.FlightSnapshot, id adsb.IcaoId) airspace.Aircr
 
 	af := fs.Flight.Airframe
 	af.Icao24 = string(id)
+
+	// Hack up some fake 'message types' ...
+	if fs.Trackpoint.DataSource == "fr24" {
+		if tf5m := regexp.MustCompile("T-F5M").FindString(msg.ReceiverName); tf5m != "" {
+			msg.Type = "T-F5M"
+		} else if mlat := regexp.MustCompile("MLAT").FindString(msg.ReceiverName); mlat != "" {
+			msg.Type = "MLAT"
+		}
+	}
 	
 	return airspace.AircraftData{
  		Msg: &msg,
 		Airframe: af,
 		NumMessagesSeen: 1,
-		Source: "fr24",
+		Source: fs.Trackpoint.DataSource,
 	}
 }
 
@@ -123,18 +143,18 @@ func fr24ToAirspace(c context.Context, as *airspace.Airspace) string {
 	str := ""
 
 	fr,_ := fr24.NewFr24(urlfetch.Client(c))
-	snapshots,err := fr.LookupCurrentList(sfo.KAirports["SFO"].Box(250,250))
+	snapshots,err := fr.LookupCurrentList(sfo.KAirports["KSFO"].Box(250,250))
 	if err != nil {
 		str += fmt.Sprintf("fr24/Current: err: %v\n", err)
 		return str
 	}
 	
-	for i,f := range snapshots {
+	for _,f := range snapshots {
 		if f.Altitude < 10 { continue }
 		//if f.Destination == "" { continue } // Strip out general aviation
 		str += fmt.Sprintf(" * EE %s\n", f)
 		
-		id := adsb.IcaoId(fmt.Sprintf("EE%04x", i))
+		id := adsb.IcaoId(fmt.Sprintf("EE%s", f.IcaoId))
 		as.Aircraft[id] = snapshot2AircraftData(f,id)
 	}
 	
@@ -160,8 +180,6 @@ func compHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	str := "OK\n\n"
-
-	str += firehoseBySocket(c)+"\n"
 	
 	deb := fr24ToAirspace(c, &as)
 	str += "**fr24**\n"+deb
@@ -180,6 +198,12 @@ func compHandler(w http.ResponseWriter, r *http.Request) {
 			delete(as.Aircraft, k)
 		}
 	}
+
+	data,err := json.MarshalIndent(as, "", "  ")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	
 	if r.FormValue("text") != "" {
 		w.Header().Set("Content-Type", "text/plain")
@@ -187,13 +211,14 @@ func compHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		var params = map[string]interface{}{
 			"Legend": buildLegend(),
-			"AircraftJS": as.ToJSVar(r.URL.Host, time.Now().Add(-30 * time.Second)),
+			//"AircraftJS": as.ToJSVar(r.URL.Host, time.Now().Add(-30 * time.Second)),
+			"AircraftJSON": template.JS(data),
 			"MapsAPIKey": "",
 			"Center": sfo.KFixes["YADUT"],
 			"Zoom": 9,
 		}
 
-		if err := templates.ExecuteTemplate(w, "airspace-map", params); err != nil {
+		if err := templates.ExecuteTemplate(w, "map-static", params); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}

@@ -1,4 +1,3 @@
-// Package airspace maintains a single, central snapshot of current aircraft status
 package airspace
 
 import(
@@ -7,10 +6,33 @@ import(
 	"time"
 )
 
-type FakeAircraftData AircraftData
+// skypi populates these fields:
+//   adsb.CompositeMsg.ReceiverName ("ScottsValley")
+//   adsb.Msg.Type                  ("MSG"/"MLAT")
+// which are turned into trackfragments:
+//   fdb.TrackFragment.DataSystem            (DSADSB/DSMLAT)  <- msg.IsMLAT() - DISCARDED??
+//   fdb.TrackFragment.Track[0].DataSource   ("ADSB","MLAT")  <- msg.IsMLAT()
+//   fdb.TrackFragment.Track[0].ReceiverName ("ScottsValley") <- msg.ReceiverName
+// this gets turned into a ui.AirctaftData:
+//   ui.AircraftData.Msg <- compositemsg
+//   ui.AircraftData.Source <- geenrated by hand, in ui/airspaces.go
+
+// for skypi, this is sent out as JSON, with some synthetic fields added:
+//   X_DataSource  <- compositemsg.DataSource()
+// for fr24, we fetch fields (via fr24.ParseCurrentList) as follows:
+//   fdb.FlightSnapshot.Trackpoint.DataSource:   "fr24"        <- hardcoded)
+//   fdb.FlightSnapshot.Trackpoint.ReceiverName: ("T-TMLAT2")  <- v[8]
+// in the JS UI, the aircraftdata fields are used as follows:
+//   ad.Source: pick primary colour (fa, fr24, skypi)
+//   ad.X_DataSystem: pick sub-colour (just for skypi - MLAT vs ADSB)
+//   printout: ad.Source / ad.Msg.ReceiverName (ad.X_DataSystem)
+
 
 // As we write the JSON, add some synthetic fields. We cast our object into a fake datatype
 // to avoid infinite regress; this works, as it gets collapsed back into the same set of vals.
+
+type FakeAircraftData AircraftData
+
 func (ad AircraftData) MarshalJSON() ([]byte, error) {
 	m := ad.Msg
 	idSpec := fmt.Sprintf("%s@%d", string(m.Icao24), time.Now().Unix())
