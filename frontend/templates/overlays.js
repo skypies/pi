@@ -2,18 +2,14 @@
 
 // Library of some routines that add furniture to the map.
 //   ClassBOverlay();
-//   PathsOverlay();
+//   PathsOverlay();  Depends on .Waypoints
 
 function ClassBOverlay() {
     var classb = [
-//        { center: {lat:  37.6188172 , lng:  -122.3754281 }, boundaryMeters:  12964 }, //  7NM
-//        { center: {lat:  37.6188172 , lng:  -122.3754281 }, boundaryMeters:  18520 }, // 10NM
-//        { center: {lat:  37.6188172 , lng:  -122.3754281 }, boundaryMeters:  27780 }, // 15NM
         { center: {lat:  37.6188172 , lng:  -122.3754281 }, boundaryMeters:  37040 }, // 20NM
         { center: {lat:  37.6188172 , lng:  -122.3754281 }, boundaryMeters:  46300 }, // 25NM
         { center: {lat:  37.6188172 , lng:  -122.3754281 }, boundaryMeters:  55560 }, // 30NM
-    ]
-
+    ];
     for (var i=0; i< classb.length; i++) {
         // Add the circle for this city to the map.
         var cityCircle = new google.maps.Circle({
@@ -28,7 +24,8 @@ function ClassBOverlay() {
         });
     }
 }
-// These should come from geo/sfo
+
+// Small subset; use these unless we're presented with a .Waypoint var.
 var waypoints = {
     // SERFR2
     "SERFR": {pos:{lat: 36.0683056 , lng:  -121.3646639}},
@@ -56,30 +53,41 @@ var waypoints = {
     "CARME": {pos:{lat: 36.4551833, lng: -121.8797139}},
     "ANJEE": {pos:{lat: 36.7462861, lng: -121.9648917}},
     "SKUNK": {pos:{lat: 37.0075944, lng: -122.0332278}},
-    "BOLDR": {pos:{lat: 37.1708861, lng: -122.0761667}},       
-
-    // Things for SILCN3
-    "X_RSH": {pos:{lat: 36.868582, lng: -121.691934}},
-    "VLLEY": {pos:{lat: 36.5091667, lng:-121.4402778}},
-    "GUUYY": {pos:{lat: 36.7394444, lng:-121.5411111}},
-    "SSEBB": {pos:{lat: 36.9788889, lng:-121.6425000}},
-    "GSTEE": {pos:{lat: 37.0708333, lng:-121.6716667}},
-    "KLIDE": {pos:{lat: 37.1641667, lng:-121.7130556}},
-    "BAXBE": {pos:{lat: 36.7730556, lng:-121.6263889}},
-    "APLLE": {pos:{lat: 37.0338889, lng:-121.8050000}}
+    "BOLDR": {pos:{lat: 37.1708861, lng: -122.0761667}}
 }
 
 function PathsOverlay() {
+    {{if .Waypoints}}waypoints = {{.Waypoints}}{{end}}
+
+    var infowindow = new google.maps.InfoWindow({});
+    var marker = new google.maps.Marker({ map: map });
+
     for (var wp in waypoints) {
         var fixCircle = new google.maps.Circle({
+            title: wp, // this attribute is for the mouse events below
             strokeWeight: 2,
             strokeColor: '#990099',
             //fillColor: '#990099',
             fillOpacity: 0.0,
             map: map,
+            zIndex: 20,
             center: waypoints[wp].pos,
             radius: 300
         });
+
+        // Add a tooltip thingy
+        google.maps.event.addListener(fixCircle, 'mouseover', function () {
+            if (typeof this.title !== "undefined") {
+                marker.setPosition(this.getCenter()); // get circle's center
+                infowindow.setContent("<b>" + this.title + "</b>"); // set content
+                infowindow.open(map, marker); // open at marker's location
+                marker.setVisible(false); // hide the marker
+            }
+        });
+        google.maps.event.addListener(fixCircle, 'mouseout', function () {
+            infowindow.close();
+        });
+
         // Would be nice to render the waypoint's name on the map somehow ...
         // http://stackoverflow.com/questions/3953922/is-it-possible-to-write-custom-text-on-google-maps-api-v3
     }
