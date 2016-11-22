@@ -78,7 +78,7 @@ function PaintAircraft(a) {
     var color = "#0033ff"; // Default: SkyPi/ADSB color
     if (a.Source == "fr24") {
         if (a.X_DataSystem == "T-F5M") {
-            color = "#44ee99";
+            color = "#005500";
         } else {
             color = "#00ff33";
         }

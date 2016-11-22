@@ -1,21 +1,16 @@
-
 package main
 
 // A handler to compare/contrast various airspaces on top of each other
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
+	"os"
 	"regexp"
-	"html/template"
 	"time"
 	
 	"golang.org/x/net/context"
-	"google.golang.org/appengine"
 	"google.golang.org/appengine/urlfetch"
 
-	"github.com/skypies/util/date"
 	"github.com/skypies/geo"
 	"github.com/skypies/geo/sfo"
 	"github.com/skypies/adsb"
@@ -28,14 +23,10 @@ import (
 )
 
 func init() {
-	http.HandleFunc("/comp", compHandler)
-	http.HandleFunc("/comp2", compHandler)
+	//http.HandleFunc("/comp", compHandler)
+	//http.HandleFunc("/comp2", compHandler)
 }
 
-func buildLegend() string {
-	legend := date.NowInPdt().Format("15:04:05 MST (2006/01/02)")
-	return legend
-}
 
 // {{{ faFlight2AirspaceAircraft
 
@@ -153,7 +144,7 @@ func fr24ToAirspace(c context.Context, as *airspace.Airspace) string {
 		if f.Altitude < 10 { continue }
 		//if f.Destination == "" { continue } // Strip out general aviation
 		str += fmt.Sprintf(" * EE %s\n", f)
-		
+
 		id := adsb.IcaoId(fmt.Sprintf("EE%s", f.IcaoId))
 		as.Aircraft[id] = snapshot2AircraftData(f,id)
 	}
@@ -163,7 +154,14 @@ func fr24ToAirspace(c context.Context, as *airspace.Airspace) string {
 
 // }}}
 
+/*
+
 // {{{ compHandler
+
+func buildLegend() string {
+	legend := date.NowInPdt().Format("15:04:05 MST (2006/01/02)")
+	return legend
+}
 
 // A few conclusions ...
 // fr24 is fairly timely; usually only 4s stale
@@ -224,6 +222,8 @@ func compHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // }}}
+
+*/
 
 // {{{ -------------------------={ E N D }=----------------------------------
 
