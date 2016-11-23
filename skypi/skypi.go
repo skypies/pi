@@ -5,7 +5,8 @@ package main
 
 // cp serfr0-fdb-blahblah.json ~/.config/gcloud/application_default_credentials.json
 // go get github.com/skypies/pi/skypi
-// go build github.com/skypies/pi/skypi
+// GOOS=linux GOARCH=arm go build github.com/skypies/pi/skypi
+
 // $GOPATH/bin/skypi -receiver="MyStationName"
 // ... maybe also: -h=southpi:30003 -maxage=4s -timeloc="America/Los_angeles" -v=2 -topic=""
 
@@ -37,7 +38,7 @@ var fBufferMinPublish      time.Duration
 var fVerbose               int
 
 func init() {
-	flag.StringVar(&fReceiverName, "receiver", "TestStation", "Name for this data source")
+	flag.StringVar(&fReceiverName, "receiver", "TestStation", "Name for this receiver gizmo")
 	flag.StringVar(&fHostPorts, "hosts", "localhost:30003", "host:port[,host2:port2]")	
 	flag.StringVar(&fProjectName, "project", "serfr0-fdb",
 		"Name of the Google cloud project hosting the pubsub")
@@ -189,6 +190,11 @@ outerLoop:
 					Log.Fatalf("100 bad msgs; set -timeloc ?\nNow = %s\nmsg = %s\n", time.Now(),
 						msg.GeneratedTimestampUTC)
 				}
+			}
+
+			// If the message is flagged as one we should mask, honor that
+			if msg.IsMasked() {
+				continue
 			}
 			
 			msgChan <- &msg
