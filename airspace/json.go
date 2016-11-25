@@ -55,10 +55,10 @@ func (ad AircraftData) MarshalJSON() ([]byte, error) {
 		X_AgeSecs         string  // duration string
 	}{
 		FakeAircraftData: FakeAircraftData(ad),
-
+		
 		X_UrlSkypi: fmt.Sprintf("/fdb/tracks?idspec=%s", idSpec),
 		X_UrlDescent: fmt.Sprintf("/fdb/descent?idspec=%s", idSpec),
-		X_UrlFA: fmt.Sprintf("http://flightaware.com/live/flight/%s", callsign),
+		X_UrlFA: fmt.Sprintf("http://flightaware.com/live/modes/%s/ident/%s/redirect", string(m.Icao24), callsign),
 		X_UrlFR24: fmt.Sprintf("http://www.flightradar24.com/%s", callsign),
 		X_DataSystem: m.DataSystem(),
 		X_AgeSecs: fmt.Sprintf("%.0f", time.Since(m.GeneratedTimestampUTC).Seconds()),

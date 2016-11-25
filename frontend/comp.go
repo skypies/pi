@@ -1,10 +1,9 @@
 package main
 
-// A handler to compare/contrast various airspaces on top of each other
+// Generate airspaces from fr24 and flightaware's API, for realtime comparisons.
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"time"
 	
@@ -21,11 +20,6 @@ import (
 	"github.com/skypies/flightdb2/fa"
 	"github.com/skypies/flightdb2/fr24"
 )
-
-func init() {
-	//http.HandleFunc("/comp", compHandler)
-	//http.HandleFunc("/comp2", compHandler)
-}
 
 
 // {{{ faFlight2AirspaceAircraft
@@ -153,77 +147,6 @@ func fr24ToAirspace(c context.Context, as *airspace.Airspace) string {
 }
 
 // }}}
-
-/*
-
-// {{{ compHandler
-
-func buildLegend() string {
-	legend := date.NowInPdt().Format("15:04:05 MST (2006/01/02)")
-	return legend
-}
-
-// A few conclusions ...
-// fr24 is fairly timely; usually only 4s stale
-// fa is pretty stel; 20-40s delay
-// ... so fa/Search is not super useful for realtime ID :(
-
-// Compare various realtime views of the airspace
-func compHandler(w http.ResponseWriter, r *http.Request) {
-	c := appengine.NewContext(r)
-	as,err := getAirspaceForDisplay(c, sfo.KAirports["KSFO"].Box(250,250))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	str := "OK\n\n"
-	
-	deb := fr24ToAirspace(c, &as)
-	str += "**fr24**\n"+deb
-
-	if r.FormValue("fa") != "" {
-		deb = faToAirspace(c, &as)
-		str += "\n**fa**\n"+deb
-	}
-	
-	str += fmt.Sprintf("\n** * everything ****\n\n%s", as)
-
-	// Weed out stale stuff (mostly from fa)
-	for k,_ := range as.Aircraft {
-		age := time.Since(as.Aircraft[k].Msg.GeneratedTimestampUTC)
-		if age > kMaxStaleDuration * 2 {
-			delete(as.Aircraft, k)
-		}
-	}
-
-	data,err := json.MarshalIndent(as, "", "  ")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	
-	if r.FormValue("text") != "" {
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte(str))
-	} else {
-		var params = map[string]interface{}{
-			"Legend": buildLegend(),
-			"AircraftJSON": template.JS(data),
-			"MapsAPIKey": "",
-			"Center": sfo.KFixes["YADUT"],
-			"Zoom": 9,
-		}
-
-		if err := templates.ExecuteTemplate(w, "map-static", params); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	}
-}
-
-// }}}
-
-*/
 
 // {{{ -------------------------={ E N D }=----------------------------------
 
