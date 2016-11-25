@@ -8,35 +8,42 @@ use Sys::Hostname;
 
 our $workdir = "$ENV{HOME}/.update";
 our $hostname = hostname;
-our $updater = "updater.$hostname";
+
+sub fetch_and_maybe_eval {
+    my ($filename) = @_;
+
+    `curl -s http://worrall.cc/skypi/$filename -o $filename`;
+    (-f $filename) || die "curl failed, looks like\n";
+
+    my @s1 = split(' ', `sum $filename`);
+    my @s2 = split(' ', `sum $filename.last`);
+    if ($s1[0] eq $s2[0]) {
+        unlink ($filename);
+        exit 0;
+    }
+
+    my $outfile = $filename.".".strftime("%Y%m%d-%H%M%S",gmtime(time()));
+    chmod(0755, $filename);
+    system("./$filename 1>$outfile 2>&1");
+
+    # Roll scripts
+    if (-f "$filename.last") {
+        my $suffix = strftime("%Y%m%d-%H%M%S", gmtime((stat "$filename.last")[9]));
+        rename("$filename.last", "$filename.$suffix")
+    }
+    rename ($filename, "$filename.last");
+
+    my $destfile = "skypi\@wormers.net:~/$hostname";
+    `scp $outfile $destfile`;
+}
 
 eval {
     (-d $workdir) || mkdir($workdir) || die "mkdir $workdir: $!\n";
     chdir($workdir) || die "chdir $workdir: $!\n";
 
-    `curl -s http://worrall.cc/skypi/$updater -o $updater`;
-    (-f $updater) || die "curl failed, looks like\n";
-
-    my @s1 = split(' ', `sum $updater`);
-    my @s2 = split(' ', `sum $updater.last`);
-    if ($s1[0] eq $s2[0]) {
-        unlink ($updater);
-        exit 0;
+    for my $filename ("updater.$hostname", "updater.all") {
+        fetch_and_maybe_eval ($filename);
     }
-
-    my $outfile = "updater.".strftime("%Y%m%d-%H%M%S",gmtime(time()));
-    chmod(0755, $updater);
-    system("./$updater 1>$outfile 2>&1");
-
-    # Roll scripts
-    if (-f "$updater.last") {
-        my $suffix = strftime("%Y%m%d-%H%M%S", gmtime((stat "$updater.last")[9]));
-        rename("$updater.last", "$updater.$suffix")
-    }
-    rename ($updater, "$updater.last");
-
-    my $destfile = "skypi\@wormers.net:~/$hostname";
-    `scp $outfile $destfile`;
 
 }; if ($@) {
     print "Aborted with: $@\n";
