@@ -4,20 +4,28 @@
 //  legend: top-right
 //  details: bottom-left
 
-function PaintDetails(htmlFrag)  { PaintBox('details', htmlFrag) }
-function PaintLegend(htmlFrag)   { PaintBox('legend',  htmlFrag) }
+function PaintDetails(htmlFrag)  { ReplaceBox('details', htmlFrag) }
+function PaintLegend(htmlFrag)   { ReplaceBox('legend',  htmlFrag) }
 
-function PaintBox(name, htmlFrag) {
+function PaintNotes(htmlFrag)   { ReplaceBox('notes',  htmlFrag) }
+function AddNote(htmlFrag)   { AppendBox('notes',  htmlFrag) }
+
+function ReplaceBox(name, htmlFrag) { UpdateBox(name, htmlFrag, false) }
+function AppendBox(name, htmlFrag) { UpdateBox(name, htmlFrag, true) }
+
+function UpdateBox(name, htmlFrag, append) {
     var box = document.getElementById(name);
     var div = document.createElement('div');
     div.innerHTML = htmlFrag;
 
     // Delete prev contents
-    while (box.hasChildNodes()) {
-        box.removeChild(box.lastChild);
+    if (!append) {
+        while (box.hasChildNodes()) {
+            box.removeChild(box.lastChild);
+        }
     }
-    box.appendChild(div);
 
+    box.appendChild(div);
 }
 
 {{end}}
