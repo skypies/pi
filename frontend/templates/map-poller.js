@@ -4,6 +4,8 @@
 {{template "js-textboxes"}}
 {{template "js-airspace"}}
 
+{{template "js-heatmap"}}
+
 var map;
 function initMap() {
     map = new google.maps.Map(document.getElementById('map'), {
@@ -19,7 +21,8 @@ function initMap() {
 
     ClassBOverlay();
     PathsOverlay();
-
+    FetchAndPaintHeatmap("2m");
+    
     InitMapsAirspace();
     poll2(() => new Promise(() => pollAndPaint( {{.URLToPoll}} )), gPollingIntervalMillis)
 }
