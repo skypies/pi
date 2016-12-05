@@ -102,7 +102,7 @@ func (a Airspace)String() string {
 	
 	for _,k := range keys {
 		ac := a.Aircraft[adsb.IcaoId(k)]
-		str += fmt.Sprintf(" %8.8s/%s/%s (%s last:%6.1fs at %s/%s, %5d msgs) %5df, %3dk\n",
+		str += fmt.Sprintf(" %8.8s/%-8.8s/%-6.6s (%s last:%6.1fs at %s/%s, %5d msgs) %5df, %3dk\n",
 			ac.Msg.Callsign, ac.Msg.Icao24, ac.Registration,
 			ac.Msg.DataSystem(),
 			time.Since(ac.Msg.GeneratedTimestampUTC).Seconds(),
