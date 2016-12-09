@@ -32,6 +32,8 @@ var(
 // {{{ rootHandler
 
 // /?json=1&box_sw_lat=36.1&box_sw_long=-122.2&box_ne_lat=37.1&box_ne_long=-121.5
+//  &comp=1      (for fr24)
+//  &icao=AF1212 (for limiting heatmaps to one aircraft)
 func rootHandler(w http.ResponseWriter, r *http.Request) {	
 	if r.FormValue("json") != "" {
 		jsonOutputHandler(w,r)
@@ -42,12 +44,13 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
 	if r.FormValue("comp") != "" {
 		url += "&comp=1"
 	}
-		
+
 	var params = map[string]interface{}{
 		"MapsAPIKey": "",
 		"Center": sfo.KFixes["YADUT"],
 		"Zoom": 9,
 		"URLToPoll": url,
+		"IcaoId": r.FormValue("icao"),
 	}
 
 	if err := templates.ExecuteTemplate(w, "map-poller", params); err != nil {

@@ -1,5 +1,6 @@
 {{define "js-map-poller"}}
 
+{{template "js-polling"}}
 {{template "js-overlays"}}
 {{template "js-textboxes"}}
 {{template "js-airspace"}}
@@ -8,23 +9,40 @@
 
 var map;
 function initMap() {
+    {{template "js-map-styles"}}
+    
     map = new google.maps.Map(document.getElementById('map'), {
         center: {lat: {{.Center.Lat}}, lng: {{.Center.Long}}},
-        mapTypeId: google.maps.MapTypeId.TERRAIN,
-        zoom: {{.Zoom}}
+        zoom: {{.Zoom}},
+        mapTypeControlOptions: {
+            mapTypeIds: ['roadmap', 'satellite', 'hybrid', 'terrain',
+                         'Silver']
+        }
     });
 
+    map.mapTypes.set('Silver', styledMapSilver);
+    map.setMapTypeId('Silver');
+    
     map.controls[google.maps.ControlPosition.RIGHT_TOP].push(
         document.getElementById('legend'));
     map.controls[google.maps.ControlPosition.LEFT_BOTTOM].push(
         document.getElementById('details'));
+    map.controls[google.maps.ControlPosition.LEFT_BOTTOM].push(
+        document.getElementById('notes'));
 
     ClassBOverlay();
     PathsOverlay();
-    FetchAndPaintHeatmap("2m");
     
     InitMapsAirspace();
-    poll2(() => new Promise(() => pollAndPaint( {{.URLToPoll}} )), gPollingIntervalMillis)
+
+    StartPolling( function(){
+        pollAndPaintAircraft( {{.URLToPoll}} );
+    }, gPollingIntervalMillis);
+
+    InitHeatmap();
+    PollForHeatmap("20s", 2000, 1000*3);
+    SetHeatmapIcaoId({{.IcaoId}});
+    //FetchAndPaintHeatmap("2h");
 }
 
 function PaintPollingLegend() {
@@ -53,13 +71,6 @@ function generateLegend() {
     return legend
 }
 
-// http://stackoverflow.com/questions/8682622/using-setinterval-to-do-simplistic-continuos-polling
-var sleep2 = time => new Promise(resolve => setTimeout(resolve, time))
-var poll2 = (promiseFn, time) => promiseFn().then(
-             sleep2(time).then(() => poll2(promiseFn, time)))
-//poll(() => new Promise(() => console.log('Hello World!')), 1000)
-
-
 var gPollingIntervalMillis = 1000;
 var gMaxPollsRemain = (60000/gPollingIntervalMillis)*30;  // 30m
 var gPollsRemain = gMaxPollsRemain;
@@ -75,7 +86,7 @@ function togglePolling() {
     PaintPollingLegend();
 }
 
-function pollAndPaint(url) {
+function pollAndPaintAircraft(url) {
     if (gPollingPaused) { return }
     PaintPollingLegend();
 
