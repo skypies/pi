@@ -12,9 +12,20 @@ var heatmap = null;
 
 var heatmapCoords;
 var heatmapIcaoId = "";
-var heatmapDuration;
+var heatmapDurationAll;
+var heatmapDurationSingle = "15m";
 var heatmapInterval;
 var heatmapIsPolling = false;
+
+function getDuration() {
+    duration = "14m";
+    if (heatmapIcaoId != "") {
+        duration = heatmapDurationSingle;
+    } else {
+        duration = heatmapDurationAll;
+    }
+    return duration;
+}
 
 function InitHeatmap() {
     heatmapCoords = new google.maps.MVCArray([]);
@@ -23,31 +34,25 @@ function InitHeatmap() {
     heatmapIsPolling = false;
 }
 
-function SetHeatmapIcaoId(icaoid) {
-    heatmapIcaoId = icaoid;
-    if (icaoid != "") {
-        heatmapDuration = "15m";
-    }
-} // Bleargh
+function SetHeatmapIcaoId(icaoid) { heatmapIcaoId = icaoid }
 
 function FetchAndPaintHeatmap(duration) {
-    if (duration == "") { duration = "15m" }
-    heatmapDuration = duration
+    if (duration == "") { duration = getDuration() }
 
-    fetchAndPaintNewHeatmap(function(){
+    fetchAndPaintNewHeatmap(duration, function(){
         PaintNotes(heatmapSummary());
     });
 }
 
 function PollForHeatmap(duration,intervalMillis,expires) {
-    heatmapDuration = duration;
+    heatmapDurationAll = duration;
     heatmapInterval = intervalMillis;
     PaintPollingLabel();
     // Actual polling is triggered by toggleHeatmapPolling
 }
 
 function heatmapSummary() {
-    var str = "Complaints in last "+heatmapDuration+": "+heatmapCoords.length;
+    var str = "Complaints in last "+getDuration()+": "+heatmapCoords.length;
     if (heatmapIcaoId != "") {
         str += "<br/>IcaoId: "+heatmapIcaoId;
     }
@@ -57,8 +62,8 @@ function heatmapSummary() {
 function PaintPollingLabel() {
     var label = ""
     if (heatmapIsPolling) {
-        label = '';//'<button onclick="toggleHeatmapPolling()">Stop Heatmap</button><br/>';
-        label += heatmapSummary();
+        label = heatmapSummary();
+        label += '<br/><button onclick="toggleHeatmapPolling()">Reset</button>';
     } else {
         label = '<button onclick="toggleHeatmapPolling()">See Complaints</button>'
     }
@@ -67,28 +72,38 @@ function PaintPollingLabel() {
 }
 
 function toggleHeatmapPolling() {
+    name = "complaintheatmap";
     if (heatmapIsPolling) {
         heatmapIsPolling = false;
+        SetHeatmapIcaoId("");
+        clearHeatmapCoords();
+        StopPolling(name);
+
     } else {
-        console.log("engage heatmap!")
         heatmapIsPolling = true;
 
+        SetHeatmapIcaoId(CurrentlySelectedIcao());
+        
         StartPolling( function(){
-            fetchAndPaintNewHeatmap(PaintPollingLabel);
-        }, heatmapInterval);
+            fetchAndPaintNewHeatmap("19s", PaintPollingLabel);
+        }, heatmapInterval, name);
     }
     PaintPollingLabel()
 }
 
-function fetchAndPaintNewHeatmap(callback) {
-    var url = "https://stop.jetnoise.net/heatmap?d=" + heatmapDuration;
+function clearHeatmapCoords() {
+    while(heatmapCoords.getLength() > 0) heatmapCoords.pop(); // How to empty an MVC array
+}
+
+function fetchAndPaintNewHeatmap(duration, callback) {
+    var url = "https://stop.jetnoise.net/heatmap?d=" + duration;
 
     if (heatmapIcaoId != "") {
         url += "&icaoid=" + heatmapIcaoId;
     }
     
     $.getJSON(url, function(arrayData){
-        while(heatmapCoords.getLength() > 0) heatmapCoords.pop(); // How to empty an MVC array
+        clearHeatmapCoords();
         $.each(arrayData, function(idx, obj){
             heatmapCoords.push(new google.maps.LatLng(obj.Lat,obj.Long));
         });

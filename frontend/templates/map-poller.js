@@ -40,7 +40,7 @@ function initMap() {
     }, gPollingIntervalMillis);
 
     InitHeatmap();
-    PollForHeatmap("20s", 2000, 1000*3);
+    PollForHeatmap("45s", 2000, 1000*3);
     SetHeatmapIcaoId({{.IcaoId}});
     //FetchAndPaintHeatmap("2h");
 }

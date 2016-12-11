@@ -5,6 +5,7 @@
 //   InitMapsAirspace();
 //   PaintAircraft(ad);
 //   ExpireAircraft(liveIds);
+//   icao = CurrentlySelectedIcao();
 //   n = CountVisibleAircraft();
 
 // Some global state
@@ -18,6 +19,10 @@ var gInfowindow;
 // are being called, and libs have been loaded.
 function InitMapsAirspace() {
     gInfowindow = new google.maps.InfoWindow({ content: "holding..." });
+    gInfowindow.addListener('closeclick', function(){
+        gInfowindowIcao24 = "";
+    });
+
     paintAirspaceSearchBox();
 }
 
@@ -25,6 +30,8 @@ function deleteExpiredMarker(icaoid) {
     gExpiredAircraft[icaoid].setMap(null);
     delete gExpiredAircraft[icaoid];
 }
+
+function CurrentlySelectedIcao() { return gInfowindowIcao24 }
 
 // Re-color any aircraft that were dropped from the recent dataset in red. And for those
 // that have been red too long, remove the marker entirely.
@@ -107,7 +114,7 @@ function PaintAircraft(a) {
         marker.addListener('click', function(){
             gInfowindow.setContent(this.html),
             gInfowindow.open(map, this);
-            gInfowindowIcao24 = a.Icao24
+            gInfowindowIcao24 = a.Icao24;
         });
         gAircraft[a.Icao24] = marker
 
