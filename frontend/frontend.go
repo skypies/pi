@@ -50,7 +50,6 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
 		"Center": sfo.KFixes["YADUT"],
 		"Zoom": 9,
 		"URLToPoll": url,
-		"IcaoId": r.FormValue("icao"),
 	}
 
 	if err := templates.ExecuteTemplate(w, "map-poller", params); err != nil {

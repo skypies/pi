@@ -14,6 +14,7 @@ function initMap() {
     map = new google.maps.Map(document.getElementById('map'), {
         center: {lat: {{.Center.Lat}}, lng: {{.Center.Long}}},
         zoom: {{.Zoom}},
+        scaleControl: true,
         mapTypeControlOptions: {
             mapTypeIds: ['roadmap', 'satellite', 'hybrid', 'terrain',
                          'Silver']
@@ -41,8 +42,6 @@ function initMap() {
 
     InitHeatmap();
     PollForHeatmap("45s", 2000, 1000*3);
-    SetHeatmapIcaoId({{.IcaoId}});
-    //FetchAndPaintHeatmap("2h");
 }
 
 function PaintPollingLegend() {
@@ -63,7 +62,7 @@ function attachOnClicksToLegendText() {
 function generateLegend() {
     var legend = ''
     if (gPollingPaused) { legend += '[<a href="#" id="toggle">Resume polling</a>]' }
-    else                { legend += "<i>(Polling active)</i>" }
+    else                { legend += "" }
 
     var now = new Date();
     legend = legend + " " + CountVisibleAircraft() + " aircraft, " + now.toTimeString();

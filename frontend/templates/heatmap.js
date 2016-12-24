@@ -32,9 +32,13 @@ function InitHeatmap() {
     heatmap = new google.maps.visualization.HeatmapLayer({data: heatmapCoords});
     heatmap.setMap(map);
     heatmapIsPolling = false;
+    heatmapIcaoId = "";
 }
 
-function SetHeatmapIcaoId(icaoid) { heatmapIcaoId = icaoid }
+function SetHeatmapIcaoId(icaoid) {
+    icaoid = icaoid.replace('EE',''); // In case this is from an fr24 dataset
+    heatmapIcaoId = icaoid;
+}
 
 function FetchAndPaintHeatmap(duration) {
     if (duration == "") { duration = getDuration() }
@@ -48,6 +52,7 @@ function PollForHeatmap(duration,intervalMillis,expires) {
     heatmapDurationAll = duration;
     heatmapInterval = intervalMillis;
     PaintPollingLabel();
+    toggleHeatmapPolling(); // Start !
     // Actual polling is triggered by toggleHeatmapPolling
 }
 
@@ -63,9 +68,9 @@ function PaintPollingLabel() {
     var label = ""
     if (heatmapIsPolling) {
         label = heatmapSummary();
-        label += '<br/><button onclick="toggleHeatmapPolling()">Reset</button>';
+        label += '<br/><button onclick="toggleHeatmapPolling()">Stop updating</button>';
     } else {
-        label = '<button onclick="toggleHeatmapPolling()">See Complaints</button>'
+        label = '<button onclick="toggleHeatmapPolling()">Start Realtime Complaints</button>'
     }
 
     PaintNotes(label)
@@ -85,7 +90,7 @@ function toggleHeatmapPolling() {
         SetHeatmapIcaoId(CurrentlySelectedIcao());
         
         StartPolling( function(){
-            fetchAndPaintNewHeatmap("19s", PaintPollingLabel);
+            fetchAndPaintNewHeatmap(getDuration(), PaintPollingLabel);
         }, heatmapInterval, name);
     }
     PaintPollingLabel()
