@@ -8,8 +8,10 @@
 // You may need to deploy some datastore indices, too:
 //   $ aedeploy gcloud preview app deploy ./index.yaml --promote --bucket gs://gcloud-arse
 
-// You can it also run it locally, without interfering with the prod subscriptions:
-//   $ go run consolidator.go -ae=false -input=testing
+// You can it also run it locally ...
+//   $ go run consolidator.go -ae=false -input=testing    [attaches to a testing topic]
+//   $ go run consolidator.go -ae=false                   [attaches to prod topic, but with new subscription]
+
 
 package main
 
@@ -24,17 +26,21 @@ import (
 	"os/signal"
 	"net/http"
 	"net/url"
+	"sort"
 	"time"
 
 	"golang.org/x/net/context"
 
 	"google.golang.org/appengine"
 
+	"github.com/codahale/hdrhistogram"
+
 	"github.com/skypies/adsb"
 	"github.com/skypies/adsb/trackbuffer"
 	fdb "github.com/skypies/flightdb2"
 	"github.com/skypies/flightdb2/fgae"
 	"github.com/skypies/pi/airspace"
+	"github.com/skypies/util/histogram"
 	"github.com/skypies/util/pubsub"
 )
 
@@ -89,13 +95,40 @@ func setup(ctx context.Context) {
 	if fOnAppEngine {
 		pubsub.Setup(ctx, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
 	} else {
-		fPubsubSubscription += "DEV"
+		fPubsubSubscription += "-DEV"
 		pubsub.Setup(ctx, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
 		pubsub.DeleteSub(ctx, fPubsubSubscription)
 		pubsub.CreateSub(ctx, fPubsubSubscription, fPubsubInputTopic)
 	}
 
 	Log.Printf("(setup)\n")
+}
+
+// }}}
+// {{{ getContexts
+
+// This is fiddly.
+
+// If we're on appengine, use their special background context; we
+// need it to talk to appengine services such as Memcache. If we're
+// not on appengine, https://metadata/ won't exist and so we can't
+// use the appengine context; but any old context will do.
+
+func getBaseContext() context.Context {
+	ctx := context.TODO()
+	if fOnAppEngine {
+		ctx = appengine.BackgroundContext()
+	}
+	return ctx
+}
+
+// But, pubsub needs a 'cloud context' with ACLs, but that is no
+// longer considered the 'AppEngine context' that memcache needs. So
+// we need to return two contexts.
+func getContexts() (context.Context, context.Context)  {
+	memcacheCtx := getBaseContext()
+	pubsubCtx := pubsub.WrapContext(fProjectName, getBaseContext())
+	return memcacheCtx,pubsubCtx
 }
 
 // }}}
@@ -189,6 +222,34 @@ func resetHandler(w http.ResponseWriter, r *http.Request) {
 
 // }}}
 
+// {{{ Hists
+
+type Hists struct {
+	M map[string]*hdrhistogram.Histogram
+}
+
+func (hists *Hists)RecordValue(key string, val int64) {
+	if hists.M == nil { hists.M = map[string]*hdrhistogram.Histogram{} }
+	if _,exists := hists.M[key]; !exists {
+		hists.M[key] = hdrhistogram.New(0,10000000,4) // timings in millis, 0s - 10,000s
+	}
+	hists.M[key].RecordValue(val)
+}
+
+func (hists *Hists)String() string {
+	keys := []string{}
+	for k,_ := range hists.M { keys = append(keys,k) }
+	sort.Strings(keys)
+
+	str := ""
+	for _,k := range keys {
+		str += fmt.Sprintf("%-20.20s %s\n", k, histogram.HDR2ASCII(hists.M[k], 40, 0, 4000))
+	}
+	return str
+}
+
+// }}}
+
 // {{{ trackVitals
 
 // These two channels are accessible from all goroutines
@@ -213,6 +274,7 @@ func trackVitals() {
 	strings := map[string]string{}
 	counters := map[string]int64{}
 	receivers := map[string]ReceiverSummary{}
+	// h := Hists{}
 	
 	for {
 		if weAreDone() { return }
@@ -239,24 +301,36 @@ func trackVitals() {
 				strings["airspaceSize"] = fmt.Sprintf("%d", req.K)
 				strings["airspaceText"] = req.Str2
 
+				// Update histograms
+				// h.RecordValue("m_BundleSize", int64(req.I))
+				
 			} else if req.Name == "_output" {
 				rcvrs := ""
-				for k,v := range receivers {
+				keys := []string{}
+				for k,_ := range receivers { keys = append(keys,k) }
+				sort.Strings(keys)
+				for _,k := range keys {
+					v := receivers[k]
 					rcvrs += fmt.Sprintf(
 						"    %-15.15s: %7d msgs, %7d bundles, last %.1f s\n",
 						k, v.NumMessagesSent, v.NumBundlesSent, time.Since(v.LastBundleTime).Seconds())
 				}
+
 				str := fmt.Sprintf(
 						"* %d messages (%d dupes; %d total; %d bundles)\n"+
 						"* Uptime: %s (started %s)\n"+
 						"* Preload: %s\n"+
 						"\n"+
 						"* Receivers:-\n%s\n"+
+						// "* Histograms:-\n%s\n"+
 						"* Airspace (%s bytes, incl. deduping):-\n%s\n",
 					counters["nNew"], counters["nDupes"], counters["nAll"], counters["nBundles"],
 					time.Second * time.Duration(int(time.Since(startupTime).Seconds())), startupTime,
 					strings["loadedOnStartup"],
-					rcvrs, strings["airspaceSize"], strings["airspaceText"])
+					rcvrs,
+					// h.String(),
+					strings["airspaceSize"],
+					strings["airspaceText"])
 
 				vitalsResponseChan <- str
 
@@ -270,12 +344,8 @@ func trackVitals() {
 // }}}
 // {{{ pullNewFromPubsub
 
-func pullNewFromPubsub(suppliedCtx context.Context, msgsOut chan<- []*adsb.CompositeMsg) {
-	// Be careful about contexts. For memcache, we need 'an App Engine context', which is what
-	// we're passed in. For pubsub, we need to derive a 'Cloud context' (this derived context is
-	// no longer considered 'an App Engine context').
-	memcacheCtx := suppliedCtx
-	pubsubCtx := pubsub.WrapContext(fProjectName, suppliedCtx)
+func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
+	memcacheCtx,pubsubCtx := getContexts()
 	setup(pubsubCtx)
 
 	// Setup our primary piece of state: the airspace. Load it from last time if we can.
@@ -293,20 +363,28 @@ func pullNewFromPubsub(suppliedCtx context.Context, msgsOut chan<- []*adsb.Compo
 		}
 		vitalsRequestChan<- VitalsRequest{Name: "loadedOnStartup", Str:loadedOnStartup}
 	}
-	
+
+	Log.Printf("(now pulling from %s)", fPubsubSubscription)
+
 	for {
 		if weAreDone() { break }
 		msgs,err := pubsub.Pull(pubsubCtx, fPubsubSubscription, 10)
 		if err != nil {
 			Log.Printf("Pull/sub=%s: err: %s", fPubsubSubscription, err)
 			time.Sleep(time.Second * 10)
+
+			// Pubsub failures have a habit of screwing up the context, such that it says
+			//  "Call error 8: There is no active request context for this API call"
+			// which (possibly) makes subsequent API calls all die - and be slow - and wedge up
+			// the process. So, generate some fresh ones.
+			memcacheCtx,pubsubCtx = getContexts()
 			continue
 
 		} else if len(msgs) == 0 {
 			time.Sleep(time.Millisecond * 200)
 			continue
 		}
-
+		
 		newMsgs := as.MaybeUpdate(msgs)
 
 		// Update our vital stats, with info about this bundle
@@ -370,7 +448,7 @@ func bufferTracks(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*adsb.Com
 				tb.AddMessage(m)
 			}
 			tb.Flush(msgsOut)
-			//if fPubsubOutputTopic != "" {}
+			//if fPubsubOutputTopic != "" {} // If we ever wanted to publish a consolidated stream, start here
 		}
 			
 		if weAreDone() { break }
@@ -391,7 +469,7 @@ func flushTracks(msgsIn <-chan []*adsb.CompositeMsg) {
 			} else if fTrackPostURL != "" {
 				flushTrackToPOST(msgs)
 			} else {
-				fmt.Printf(" -- (%d pushed for %s)\n", len(msgs), string(msgs[0].Icao24))
+				Log.Printf(" -- (%d pushed for %s)\n", len(msgs), string(msgs[0].Icao24))
 			}
 		}
 			
@@ -417,19 +495,10 @@ func weAreDone() bool {
 func main() {
 	Log.Printf("(main)\n")
 
-	// If we're on appengine, use their special background context; we
-	// need it to talk to appengine services such as Memcache. If we're
-	// not on appengine, https://metadata/ won't exist and so we can't
-	// use the appengine context; but any old context will do.
-	ctx := context.TODO()
-	if fOnAppEngine {
-		ctx = appengine.BackgroundContext()
-	}
-
 	// Do all the work (get messages from pubsub; buffer tracks; push tracks) in a three-step pipeline
 	msgChan1 := make(chan []*adsb.CompositeMsg, 3)
 	msgChan2 := make(chan []*adsb.CompositeMsg, 3)
-	go pullNewFromPubsub(ctx, msgChan1)
+	go pullNewFromPubsub(msgChan1)
 	go bufferTracks(msgChan1, msgChan2)
 	go flushTracks(msgChan2)
 
