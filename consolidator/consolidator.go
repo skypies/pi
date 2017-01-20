@@ -551,7 +551,7 @@ func main() {
 	msgChan2 := make(chan []*adsb.CompositeMsg, 3)
 	workerChans := []chan []*adsb.CompositeMsg{}
 
-	nWorkers := 8 // avoid being blocked on DB writes
+	nWorkers := 128 // avoid being blocked on DB writes
 	for i:=0; i<nWorkers; i++ {
 		workerChan := make(chan []*adsb.CompositeMsg, 3)
 		workerChans = append(workerChans, workerChan)
