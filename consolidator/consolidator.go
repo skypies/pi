@@ -40,6 +40,7 @@ import (
 	"github.com/skypies/flightdb2/fgae"
 	"github.com/skypies/pi/airspace"
 	"github.com/skypies/util/metrics"
+	"github.com/skypies/util/histogram"
 	"github.com/skypies/util/pubsub"
 )
 
@@ -298,12 +299,17 @@ func trackVitals() {
 						k, v.NumMessagesSent, v.NumBundlesSent, time.Since(v.LastBundleTime).Seconds())
 				}
 
-				workersStr := ""
-				keys = []string{}
-				for k,_ := range workers { keys = append(keys,k) }
-				sort.Strings(keys)
-				for _,k := range keys {
-					workersStr += fmt.Sprintf("    %s  %9d\n", k, workers[k])
+				workerHist := histogram.Histogram{NumBuckets:40, ValMin:0, ValMax:400}
+				// Measure if each worker did more (or less) of its fair share (where fair is 100)
+				expectedFraction := 1 / float64(len(workers))
+				tot := 0
+				for _,count := range workers {
+					tot += int(count)
+				}
+				for _,count := range workers {
+					actualFraction := float64(count) / float64(tot)
+					shareOfLoad := actualFraction / expectedFraction
+					workerHist.Add(histogram.ScalarVal(shareOfLoad * 100))
 				}
 
 				str := fmt.Sprintf(
@@ -312,14 +318,14 @@ func trackVitals() {
 						"* Preload: %s\n"+
 						"\n"+
 						"* Receivers:-\n%s\n"+
-						"* Workers:-\n%s\n"+
+						"* Worker workloads: %s\n\n"+
 						"* Metrics:-\n%s\n"+
 						"* Airspace (%s bytes, incl. deduping):-\n%s\n",
 					counters["nNew"], counters["nDupes"], counters["nAll"], counters["nBundles"], counters["nFrags"],
 					time.Second * time.Duration(int(time.Since(startupTime).Seconds())), startupTime,
 					strings["loadedOnStartup"],
 					rcvrs,
-					workersStr,
+					workerHist,
 					m.String(),
 					strings["airspaceSize"],
 					strings["airspaceText"])
@@ -379,11 +385,6 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 		} else if len(msgs) == 0 {
 			time.Sleep(time.Millisecond * 200)
 			nSleeps++
-			continue
-		}
-
-		// Short cut data we can't handle right now
-		if len(msgs) > 0 && msgs[0].ReceiverName == "CulverCity" {
 			continue
 		}
 
@@ -551,7 +552,7 @@ func main() {
 	msgChan2 := make(chan []*adsb.CompositeMsg, 3)
 	workerChans := []chan []*adsb.CompositeMsg{}
 
-	nWorkers := 128 // avoid being blocked on DB writes
+	nWorkers := 128 // avoid getting backed up on DB writes
 	for i:=0; i<nWorkers; i++ {
 		workerChan := make(chan []*adsb.CompositeMsg, 3)
 		workerChans = append(workerChans, workerChan)
