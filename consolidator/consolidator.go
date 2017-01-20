@@ -21,6 +21,7 @@ import (
 	"io/ioutil"
 	"flag"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"os"
 	"os/signal"
@@ -33,14 +34,12 @@ import (
 
 	"google.golang.org/appengine"
 
-	"github.com/codahale/hdrhistogram"
-
 	"github.com/skypies/adsb"
 	"github.com/skypies/adsb/trackbuffer"
 	fdb "github.com/skypies/flightdb2"
 	"github.com/skypies/flightdb2/fgae"
 	"github.com/skypies/pi/airspace"
-	"github.com/skypies/util/histogram"
+	"github.com/skypies/util/metrics"
 	"github.com/skypies/util/pubsub"
 )
 
@@ -222,34 +221,6 @@ func resetHandler(w http.ResponseWriter, r *http.Request) {
 
 // }}}
 
-// {{{ Hists
-
-type Hists struct {
-	M map[string]*hdrhistogram.Histogram
-}
-
-func (hists *Hists)RecordValue(key string, val int64) {
-	if hists.M == nil { hists.M = map[string]*hdrhistogram.Histogram{} }
-	if _,exists := hists.M[key]; !exists {
-		hists.M[key] = hdrhistogram.New(0,10000000,4) // timings in millis, 0s - 10,000s
-	}
-	hists.M[key].RecordValue(val)
-}
-
-func (hists *Hists)String() string {
-	keys := []string{}
-	for k,_ := range hists.M { keys = append(keys,k) }
-	sort.Strings(keys)
-
-	str := ""
-	for _,k := range keys {
-		str += fmt.Sprintf("%-20.20s %s\n", k, histogram.HDR2ASCII(hists.M[k], 40, 0, 4000))
-	}
-	return str
-}
-
-// }}}
-
 // {{{ trackVitals
 
 // These two channels are accessible from all goroutines
@@ -257,10 +228,10 @@ var vitalsRequestChan = make(chan VitalsRequest, 40)
 var vitalsResponseChan = make(chan string, 5)  // Only used for stats output
 
 type VitalsRequest struct {
-	Name      string  // _output, _reset, or _update
-	Str,Str2  string
-	I,J,K     int64
-	T         time.Time
+	Name             string  // _output, _reset, or _update
+	Str,Str2         string
+	I,J,K,L,M,N,O,P  int64
+	T                time.Time
 }
 
 type ReceiverSummary struct {
@@ -272,9 +243,10 @@ type ReceiverSummary struct {
 func trackVitals() {
 	startupTime := time.Now().Round(time.Second)
 	strings := map[string]string{}
+	workers := map[string]int64{}
 	counters := map[string]int64{}
 	receivers := map[string]ReceiverSummary{}
-	// h := Hists{}
+	m := metrics.NewMetrics()
 	
 	for {
 		if weAreDone() { return }
@@ -301,8 +273,18 @@ func trackVitals() {
 				strings["airspaceSize"] = fmt.Sprintf("%d", req.K)
 				strings["airspaceText"] = req.Str2
 
-				// Update histograms
-				// h.RecordValue("m_BundleSize", int64(req.I))
+				// Update metrics
+				m.RecordValue("BundleSize", req.I)
+				m.RecordValue("NumSleeps", req.L)
+				m.RecordValue("PullMillis", req.M)
+				m.RecordValue("ToQueueMillis", req.N)
+				m.RecordValue("MemcacheMillis", req.O)
+				m.RecordValue("PreludeMillis", req.P)
+
+			} else if req.Name == "_flush" {
+				m.RecordValue("DBWriteMillis", req.I)
+				workers[fmt.Sprintf("%03d",req.J)]++
+				counters["nFrags"]++
 				
 			} else if req.Name == "_output" {
 				rcvrs := ""
@@ -316,19 +298,29 @@ func trackVitals() {
 						k, v.NumMessagesSent, v.NumBundlesSent, time.Since(v.LastBundleTime).Seconds())
 				}
 
+				workersStr := ""
+				keys = []string{}
+				for k,_ := range workers { keys = append(keys,k) }
+				sort.Strings(keys)
+				for _,k := range keys {
+					workersStr += fmt.Sprintf("    %s  %9d\n", k, workers[k])
+				}
+
 				str := fmt.Sprintf(
-						"* %d messages (%d dupes; %d total; %d bundles)\n"+
+						"* %d messages (%d dupes; %d total; %d bundles received, %d frags written)\n"+
 						"* Uptime: %s (started %s)\n"+
 						"* Preload: %s\n"+
 						"\n"+
 						"* Receivers:-\n%s\n"+
-						// "* Histograms:-\n%s\n"+
+						"* Workers:-\n%s\n"+
+						"* Metrics:-\n%s\n"+
 						"* Airspace (%s bytes, incl. deduping):-\n%s\n",
-					counters["nNew"], counters["nDupes"], counters["nAll"], counters["nBundles"],
+					counters["nNew"], counters["nDupes"], counters["nAll"], counters["nBundles"], counters["nFrags"],
 					time.Second * time.Duration(int(time.Since(startupTime).Seconds())), startupTime,
 					strings["loadedOnStartup"],
 					rcvrs,
-					// h.String(),
+					workersStr,
+					m.String(),
 					strings["airspaceSize"],
 					strings["airspaceText"])
 
@@ -366,8 +358,12 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 
 	Log.Printf("(now pulling from %s)", fPubsubSubscription)
 
+	tPrevEnd := time.Now()
+
 	for {
 		if weAreDone() { break }
+		tStart := time.Now()
+		nSleeps := 0
 		msgs,err := pubsub.Pull(pubsubCtx, fPubsubSubscription, 10)
 		if err != nil {
 			Log.Printf("Pull/sub=%s: err: %s", fPubsubSubscription, err)
@@ -382,26 +378,23 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 
 		} else if len(msgs) == 0 {
 			time.Sleep(time.Millisecond * 200)
+			nSleeps++
 			continue
 		}
-		
-		newMsgs := as.MaybeUpdate(msgs)
 
-		// Update our vital stats, with info about this bundle
-		airspaceBytes,_ := as.ToBytes()
-		vitalsRequestChan<- VitalsRequest{
-			Name: "_update",
-			Str:msgs[0].ReceiverName,
-			I:int64(len(msgs)),
-			J:int64(len(newMsgs)),
-			Str2: as.String(),
-			K: int64(len(airspaceBytes)),
-			T: msgs[len(msgs)-1].GeneratedTimestampUTC,
+		// Short cut data we can't handle right now
+		if len(msgs) > 0 && msgs[0].ReceiverName == "CulverCity" {
+			continue
 		}
+
+		tPullDone := time.Now()
+		tMsgsSent := tPullDone
+		newMsgs := as.MaybeUpdate(msgs)
 		
 		if len(newMsgs) > 0 {
 			// Pass them to the other goroutine for dissemination, and get back to business.
 			msgsOut <- newMsgs
+			tMsgsSent = time.Now()
 
 			if fOnAppEngine {
 				if err := as.JustAircraftToMemcache(memcacheCtx); err != nil {
@@ -412,6 +405,28 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 					len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
 			}
 		}
+		tMemcacheDone := time.Now()
+
+		// Update our vital stats, with info about this bundle
+		airspaceBytes,_ := as.ToBytes()
+		vitalsRequestChan<- VitalsRequest{
+			Name: "_update",
+			Str:msgs[0].ReceiverName,
+			I:int64(len(msgs)),
+			J:int64(len(newMsgs)),
+
+			// Some primitive wait state data (latencies in millis)
+			L:int64(nSleeps),
+			M:(tPullDone.Sub(tStart).Nanoseconds() / 1000000),
+			N:(tMsgsSent.Sub(tPullDone).Nanoseconds() / 1000000),
+			O:(tMemcacheDone.Sub(tMsgsSent).Nanoseconds() / 1000000),
+			P:(tStart.Sub(tPrevEnd).Nanoseconds() / 1000000),  // prelude/zombie time
+
+			Str2: as.String(),
+			K: int64(len(airspaceBytes)),
+			T: msgs[len(msgs)-1].GeneratedTimestampUTC,
+		}
+		tPrevEnd = time.Now()
 	}
 
 	if fOnAppEngine {
@@ -457,25 +472,62 @@ func bufferTracks(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*adsb.Com
 }
 
 // }}}
-// {{{ flushTracks
+// {{{ workerDispatch
 
-func flushTracks(msgsIn <-chan []*adsb.CompositeMsg) {	
+func workerDispatch(msgsIn <-chan []*adsb.CompositeMsg, workersOut []chan []*adsb.CompositeMsg) {
 	for {
 		select {
 		case <-time.After(time.Second):
 		case msgs := <-msgsIn:
+			// pick a worker, based on the icao24; it's important that we don't process frags for the same icaoid
+			// in parallel, or we'll suffer a write-write conflict and overwrite some data.
+			h := fnv.New32()
+			h.Write([]byte(msgs[0].Icao24))
+			i := h.Sum32()
+			workerId := i % uint32(len(workersOut))
+
+			// Log.Printf("{%s} -> %20.20d (%% %d) -> %6d", string(msgs[0].Icao24), i, len(workersOut), workerId)
+
+			// Send the message frag to the worker.
+			workersOut[workerId] <- msgs
+		}
+
+		if weAreDone() { break }
+	}
+	Log.Printf(" -- workerDispatch clean exit\n")
+}
+
+// }}}
+// {{{ flushTracks
+
+// The worker bee function
+func flushTracks(myId int, msgsIn <-chan []*adsb.CompositeMsg) {
+	Log.Printf("(flushTracks/%03d starting)\n", myId)
+
+	for {
+		select {
+		case <-time.After(time.Second):
+		case msgs := <-msgsIn:
+			tStart := time.Now()
 			if fOnAppEngine {
 				flushTrackToDatastore(msgs)
 			} else if fTrackPostURL != "" {
 				flushTrackToPOST(msgs)
-			} else {
-				Log.Printf(" -- (%d pushed for %s)\n", len(msgs), string(msgs[0].Icao24))
+			// } else {
+			//	Log.Printf(" -- (%d pushed for %s)\n", len(msgs), string(msgs[0].Icao24))
+			}
+
+			vitalsRequestChan<- VitalsRequest{
+				Name: "_flush",
+				I:(time.Since(tStart).Nanoseconds() / 1000000),
+				J:int64(myId),
 			}
 		}
 			
 		if weAreDone() { break }
 	}
-	Log.Printf(" -- flushTracks clean exit\n")
+
+	Log.Printf(" -- flushTracks/%03d clean exit\n", myId)
 }
 
 // }}}
@@ -495,12 +547,20 @@ func weAreDone() bool {
 func main() {
 	Log.Printf("(main)\n")
 
-	// Do all the work (get messages from pubsub; buffer tracks; push tracks) in a three-step pipeline
 	msgChan1 := make(chan []*adsb.CompositeMsg, 3)
 	msgChan2 := make(chan []*adsb.CompositeMsg, 3)
-	go pullNewFromPubsub(msgChan1)
-	go bufferTracks(msgChan1, msgChan2)
-	go flushTracks(msgChan2)
+	workerChans := []chan []*adsb.CompositeMsg{}
+
+	nWorkers := 8 // avoid being blocked on DB writes
+	for i:=0; i<nWorkers; i++ {
+		workerChan := make(chan []*adsb.CompositeMsg, 3)
+		workerChans = append(workerChans, workerChan)
+		go flushTracks(i, workerChan)          // worker bee, write per-flight fragments to disc
+	}
+
+	go pullNewFromPubsub(msgChan1)           // sends mixed bundles down chan1
+	go bufferTracks(msgChan1, msgChan2)      // ... sorts messages into per-flight frags, sends them down chan2 ...
+	go workerDispatch(msgChan2, workerChans) // ... takes a per-flight frag, picks a workerChan to handle it
 
 	// Manage vital statistics in a thread safe way
 	go trackVitals()
