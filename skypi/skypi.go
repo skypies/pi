@@ -12,6 +12,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"log"
 	"net"
@@ -20,7 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-	
+
 	"github.com/skypies/adsb"
 	"github.com/skypies/adsb/msgbuffer"
 	"github.com/skypies/util/pubsub"
@@ -106,7 +107,9 @@ func acceptMsg(msgChan <-chan *adsb.Msg, publishChan chan<- []*adsb.CompositeMsg
 func publishMsgBundles(thisGoroutineWG *sync.WaitGroup, ch <-chan []*adsb.CompositeMsg) {
 	thisGoroutineWG.Add(1)
 
-	c := pubsub.GetLocalContext(fProjectName)
+	ctx := context.TODO()
+	client := pubsub.NewClient(ctx,fProjectName)
+	// c := pubsub.GetLocalContext(fProjectName)
 	wg := &sync.WaitGroup{}
 	
 	for msgs := range ch {
@@ -121,7 +124,7 @@ func publishMsgBundles(thisGoroutineWG *sync.WaitGroup, ch <-chan []*adsb.Compos
 				if fVerbose > 1 { for i,m := range msgs { Log.Printf(" [%2d] %s\n", i, m) } }
 			}
 			if fPubsubTopic != "" {
-				if err := pubsub.PublishMsgs(c, fPubsubTopic, fReceiverName, msgs); err != nil {
+				if err := pubsub.PublishMsgs(ctx, client, fPubsubTopic, fReceiverName, msgs); err != nil {
 					Log.Printf("-- err: %v\n", err)
 				}
 			}

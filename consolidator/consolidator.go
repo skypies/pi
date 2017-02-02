@@ -18,20 +18,20 @@ package main
 // {{{ import()
 
 import (
-	"io/ioutil"
+	"context"
 	"flag"
 	"fmt"
 	"hash/fnv"
+	"io/ioutil"
 	"log"
-	"os"
-	"os/signal"
 	"net/http"
 	"net/url"
+	"os"
+	"os/signal"
 	"sort"
 	"time"
 
-	"golang.org/x/net/context"
-
+	"google.golang.org/api/iterator"
 	"google.golang.org/appengine"
 
 	"github.com/skypies/adsb"
@@ -92,16 +92,6 @@ func init() {
 
 // Can't call this until we've got some kind of context
 func setup(ctx context.Context) {	
-	if fOnAppEngine {
-		pubsub.Setup(ctx, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
-	} else {
-		fPubsubSubscription += "-DEV"
-		pubsub.Setup(ctx, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
-		pubsub.DeleteSub(ctx, fPubsubSubscription)
-		pubsub.CreateSub(ctx, fPubsubSubscription, fPubsubInputTopic)
-	}
-
-	Log.Printf("(setup)\n")
 }
 
 // }}}
@@ -127,7 +117,7 @@ func getBaseContext() context.Context {
 // we need to return two contexts.
 func getContexts() (context.Context, context.Context)  {
 	memcacheCtx := getBaseContext()
-	pubsubCtx := pubsub.WrapContext(fProjectName, getBaseContext())
+	pubsubCtx := getBaseContext() //pubsub.WrapContext(fProjectName, getBaseContext())
 	return memcacheCtx,pubsubCtx
 }
 
@@ -276,7 +266,7 @@ func trackVitals() {
 
 				// Update metrics
 				m.RecordValue("BundleSize", req.I)
-				m.RecordValue("NumSleeps", req.L)
+				//m.RecordValue("NumSleeps", req.L) // L unused
 				m.RecordValue("PullMillis", req.M)
 				m.RecordValue("ToQueueMillis", req.N)
 				m.RecordValue("MemcacheMillis", req.O)
@@ -344,8 +334,18 @@ func trackVitals() {
 
 func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 	memcacheCtx,pubsubCtx := getContexts()
-	setup(pubsubCtx)
 
+	pc := pubsub.NewClient(pubsubCtx, fProjectName)
+	if fOnAppEngine {
+		pubsub.Setup(pubsubCtx, pc, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
+	} else {
+		fPubsubSubscription += "-DEV"
+		pubsub.Setup(pubsubCtx, pc, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
+		pubsub.DeleteSub(pubsubCtx, pc, fPubsubSubscription)
+		pubsub.CreateSub(pubsubCtx, pc, fPubsubSubscription, fPubsubInputTopic)
+	}
+	Log.Printf("(pubsub setup)\n")
+	
 	// Setup our primary piece of state: the airspace. Load it from last time if we can.
 	as := airspace.Airspace{}
 	if fOnAppEngine {
@@ -362,72 +362,86 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 		vitalsRequestChan<- VitalsRequest{Name: "loadedOnStartup", Str:loadedOnStartup}
 	}
 
-	Log.Printf("(now pulling from %s)", fPubsubSubscription)
+	Log.Printf("(now pulling from topic:sub %s:%s)", fPubsubInputTopic, fPubsubSubscription)
 
 	tPrevEnd := time.Now()
 
+outerLoop: // attempts to setup a new infinite iterator
 	for {
 		if weAreDone() { break }
 		tStart := time.Now()
-		nSleeps := 0
-		msgs,err := pubsub.Pull(pubsubCtx, fPubsubSubscription, 10)
+
+		it,err := pc.Subscription(fPubsubSubscription).Pull(pubsubCtx)
 		if err != nil {
 			Log.Printf("Pull/sub=%s: err: %s", fPubsubSubscription, err)
 			time.Sleep(time.Second * 10)
-
-			// Pubsub failures have a habit of screwing up the context, such that it says
-			//  "Call error 8: There is no active request context for this API call"
-			// which (possibly) makes subsequent API calls all die - and be slow - and wedge up
-			// the process. So, generate some fresh ones.
-			memcacheCtx,pubsubCtx = getContexts()
-			continue
-
-		} else if len(msgs) == 0 {
-			time.Sleep(time.Millisecond * 200)
-			nSleeps++
-			continue
 		}
 
-		tPullDone := time.Now()
-		tMsgsSent := tPullDone
-		newMsgs := as.MaybeUpdate(msgs)
-		
-		if len(newMsgs) > 0 {
-			// Pass them to the other goroutine for dissemination, and get back to business.
-			msgsOut <- newMsgs
-			tMsgsSent = time.Now()
-
-			if fOnAppEngine {
-				if err := as.JustAircraftToMemcache(memcacheCtx); err != nil {
-					Log.Printf("main/JustAircraftToMemcache: err: %v", err)
-				}
-			} else {
-				Log.Printf("- %2d were new (%2d already seen) - %s",
-					len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
+	innerLoop: // read the iterator until we are killed
+		for {
+			if weAreDone() {
+				it.Stop()
+				break outerLoop
 			}
+			m,err := it.Next()
+			if err == iterator.Done {
+        // There are no more messages.  This will happen if it.Stop is called.
+        break innerLoop
+			} else if err != nil {
+				Log.Printf("it.Next/sub=%s: err: %s", fPubsubSubscription, err)
+        break innerLoop
+			}
+
+			m.Done(true) // Acknowledge the message.
+
+			msgs,err := pubsub.UnpackPubsubMessage(m)
+			if err != nil {
+				Log.Printf("Unpack/sub=%s: err: %s", fPubsubSubscription, err)
+				time.Sleep(time.Second * 10)
+				continue
+			}
+
+			tPullDone := time.Now()
+			tMsgsSent := tPullDone
+			newMsgs := as.MaybeUpdate(msgs)
+		
+			if len(newMsgs) > 0 {
+				// Pass them to the other goroutine for dissemination, and get back to business.
+				msgsOut <- newMsgs
+				tMsgsSent = time.Now()
+
+				if fOnAppEngine {
+					if err := as.JustAircraftToMemcache(memcacheCtx); err != nil {
+						Log.Printf("main/JustAircraftToMemcache: err: %v", err)
+					}
+				} else {
+					Log.Printf("- %2d were new (%2d already seen) - %s",
+						len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
+				}
+			}
+			tMemcacheDone := time.Now()
+
+			// Update our vital stats, with info about this bundle
+			airspaceBytes,_ := as.ToBytes()
+			vitalsRequestChan<- VitalsRequest{
+				Name: "_update",
+				Str:msgs[0].ReceiverName,
+				I:int64(len(msgs)),
+				J:int64(len(newMsgs)),
+
+				// Some primitive wait state data (latencies in millis)
+				L:0, // unsused
+				M:(tPullDone.Sub(tStart).Nanoseconds() / 1000000),
+				N:(tMsgsSent.Sub(tPullDone).Nanoseconds() / 1000000),
+				O:(tMemcacheDone.Sub(tMsgsSent).Nanoseconds() / 1000000),
+				P:(tStart.Sub(tPrevEnd).Nanoseconds() / 1000000),  // prelude/zombie time
+
+				Str2: as.String(),
+				K: int64(len(airspaceBytes)),
+				T: msgs[len(msgs)-1].GeneratedTimestampUTC,
+			}
+			tPrevEnd = time.Now()
 		}
-		tMemcacheDone := time.Now()
-
-		// Update our vital stats, with info about this bundle
-		airspaceBytes,_ := as.ToBytes()
-		vitalsRequestChan<- VitalsRequest{
-			Name: "_update",
-			Str:msgs[0].ReceiverName,
-			I:int64(len(msgs)),
-			J:int64(len(newMsgs)),
-
-			// Some primitive wait state data (latencies in millis)
-			L:int64(nSleeps),
-			M:(tPullDone.Sub(tStart).Nanoseconds() / 1000000),
-			N:(tMsgsSent.Sub(tPullDone).Nanoseconds() / 1000000),
-			O:(tMemcacheDone.Sub(tMsgsSent).Nanoseconds() / 1000000),
-			P:(tStart.Sub(tPrevEnd).Nanoseconds() / 1000000),  // prelude/zombie time
-
-			Str2: as.String(),
-			K: int64(len(airspaceBytes)),
-			T: msgs[len(msgs)-1].GeneratedTimestampUTC,
-		}
-		tPrevEnd = time.Now()
 	}
 
 	if fOnAppEngine {
@@ -438,7 +452,7 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 
 	} else {
 		// We're not on AppEngine; this is a wasteful subscription
-		if err := pubsub.DeleteSub(pubsubCtx, fPubsubSubscription); err != nil {
+		if err := pubsub.DeleteSub(pubsubCtx, pc, fPubsubSubscription); err != nil {
 			Log.Printf(" -- pullNewFromPubsub clean exit; del '%s': %v", fPubsubSubscription, err)
 		}			
 	}
@@ -552,7 +566,7 @@ func main() {
 	msgChan2 := make(chan []*adsb.CompositeMsg, 3)
 	workerChans := []chan []*adsb.CompositeMsg{}
 
-	nWorkers := 128 // avoid getting backed up on DB writes
+	nWorkers := 2//128 // avoid getting backed up on DB writes
 	for i:=0; i<nWorkers; i++ {
 		workerChan := make(chan []*adsb.CompositeMsg, 3)
 		workerChans = append(workerChans, workerChan)
