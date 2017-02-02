@@ -18,7 +18,6 @@ package main
 // {{{ import()
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"hash/fnv"
@@ -30,6 +29,8 @@ import (
 	"os/signal"
 	"sort"
 	"time"
+
+	"golang.org/x/net/context"
 
 	"google.golang.org/api/iterator"
 	"google.golang.org/appengine"
@@ -95,7 +96,7 @@ func setup(ctx context.Context) {
 }
 
 // }}}
-// {{{ getContexts
+// {{{ getBaseContext
 
 // This is fiddly.
 
@@ -105,20 +106,10 @@ func setup(ctx context.Context) {
 // use the appengine context; but any old context will do.
 
 func getBaseContext() context.Context {
-	ctx := context.TODO()
 	if fOnAppEngine {
-		ctx = appengine.BackgroundContext()
+		return appengine.BackgroundContext()
 	}
-	return ctx
-}
-
-// But, pubsub needs a 'cloud context' with ACLs, but that is no
-// longer considered the 'AppEngine context' that memcache needs. So
-// we need to return two contexts.
-func getContexts() (context.Context, context.Context)  {
-	memcacheCtx := getBaseContext()
-	pubsubCtx := getBaseContext() //pubsub.WrapContext(fProjectName, getBaseContext())
-	return memcacheCtx,pubsubCtx
+	return context.TODO()
 }
 
 // }}}
@@ -156,7 +147,7 @@ func flushTrackToDatastore(msgs []*adsb.CompositeMsg) {
 	// :O   if msgs[0].DataSystem() != "ADSB" { return }
 
 	frag := fdb.MessagesToTrackFragment(msgs)
-	db := fgae.FlightDB{C:appengine.BackgroundContext()}
+	db := fgae.FlightDB{C:getBaseContext()}
 
 	if err := db.AddTrackFragment(frag); err != nil {
 		Log.Printf("flushPost/ToDatastore: %v\n", err)
@@ -333,16 +324,16 @@ func trackVitals() {
 // {{{ pullNewFromPubsub
 
 func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
-	memcacheCtx,pubsubCtx := getContexts()
+	ctx := getBaseContext()
 
-	pc := pubsub.NewClient(pubsubCtx, fProjectName)
+	pc := pubsub.NewClient(ctx, fProjectName)
 	if fOnAppEngine {
-		pubsub.Setup(pubsubCtx, pc, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
+		pubsub.Setup(ctx, pc, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
 	} else {
 		fPubsubSubscription += "-DEV"
-		pubsub.Setup(pubsubCtx, pc, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
-		pubsub.DeleteSub(pubsubCtx, pc, fPubsubSubscription)
-		pubsub.CreateSub(pubsubCtx, pc, fPubsubSubscription, fPubsubInputTopic)
+		pubsub.Setup(ctx, pc, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
+		pubsub.DeleteSub(ctx, pc, fPubsubSubscription)
+		pubsub.CreateSub(ctx, pc, fPubsubSubscription, fPubsubInputTopic)
 	}
 	Log.Printf("(pubsub setup)\n")
 	
@@ -350,7 +341,7 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 	as := airspace.Airspace{}
 	if fOnAppEngine {
 		loadedOnStartup := ""
-		if err := as.EverythingFromMemcache(memcacheCtx); err != nil {
+		if err := as.EverythingFromMemcache(ctx); err != nil {
 			Log.Printf("airspace.EverythingFromMemcache: %v", err)
 			loadedOnStartup = fmt.Sprintf("error loading: %v", err)
 			as = airspace.Airspace{}
@@ -371,7 +362,7 @@ outerLoop: // attempts to setup a new infinite iterator
 		if weAreDone() { break }
 		tStart := time.Now()
 
-		it,err := pc.Subscription(fPubsubSubscription).Pull(pubsubCtx)
+		it,err := pc.Subscription(fPubsubSubscription).Pull(ctx)
 		if err != nil {
 			Log.Printf("Pull/sub=%s: err: %s", fPubsubSubscription, err)
 			time.Sleep(time.Second * 10)
@@ -411,7 +402,7 @@ outerLoop: // attempts to setup a new infinite iterator
 				tMsgsSent = time.Now()
 
 				if fOnAppEngine {
-					if err := as.JustAircraftToMemcache(memcacheCtx); err != nil {
+					if err := as.JustAircraftToMemcache(ctx); err != nil {
 						Log.Printf("main/JustAircraftToMemcache: err: %v", err)
 					}
 				} else {
@@ -446,13 +437,13 @@ outerLoop: // attempts to setup a new infinite iterator
 
 	if fOnAppEngine {
 		// We're shutting down, so save all the deduping signatures
-		if err := as.EverythingToMemcache(memcacheCtx); err != nil {
+		if err := as.EverythingToMemcache(ctx); err != nil {
 			Log.Printf(" -- pullNewFromPubsub clean exit; memcache: %v", err)
 		}
 
 	} else {
 		// We're not on AppEngine; this is a wasteful subscription
-		if err := pubsub.DeleteSub(pubsubCtx, pc, fPubsubSubscription); err != nil {
+		if err := pubsub.DeleteSub(ctx, pc, fPubsubSubscription); err != nil {
 			Log.Printf(" -- pullNewFromPubsub clean exit; del '%s': %v", fPubsubSubscription, err)
 		}			
 	}
