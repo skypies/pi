@@ -3,6 +3,7 @@
 // Depends on "js-polling" and "js-textboxes"; abuses the 'notes' textbox.
 
 // InitHeatmap();
+// InitUsermap();  // Unique users, not complaints
 // FetchAndPaintHeatmap(duration);                // One-off render
 // PollForHeatmap(duration,interval,expirytime);  // redraw every 'interval' until 'expirytime'
 
@@ -16,6 +17,10 @@ var heatmapDurationAll;
 var heatmapDurationSingle = "15m";
 var heatmapInterval;
 var heatmapIsPolling = false;
+
+// These two are hideous hacks.
+var heatmapOfUniqueUsers = false;  // Go for users, not complaints
+var heatmapOfAllUsers = false;     // Modifier: go for all-time users, not active<duration.
 
 function getDuration() {
     duration = "14m";
@@ -33,6 +38,17 @@ function InitHeatmap() {
     heatmap.setMap(map);
     heatmapIsPolling = false;
     heatmapIcaoId = "";
+    heatmapOfUniqueUsers = false;
+    heatmapOfAllUsers = false;
+}
+
+function InitUsermap(dur) {
+    InitHeatmap();
+
+    heatmapOfUniqueUsers = true;
+    if (dur == "all") {
+        heatmapOfAllUsers = true;
+    }
 }
 
 function SetHeatmapIcaoId(icaoid) {
@@ -40,9 +56,14 @@ function SetHeatmapIcaoId(icaoid) {
     heatmapIcaoId = icaoid;
 }
 
+// One-off, non-polling version
 function FetchAndPaintHeatmap(duration) {
-    if (duration == "") { duration = getDuration() }
-
+    if (duration == "") {
+        duration = getDuration()
+    } else {
+        heatmapDurationAll = duration
+    }
+    
     fetchAndPaintNewHeatmap(duration, function(){
         PaintNotes(heatmapSummary());
     });
@@ -61,6 +82,13 @@ function heatmapSummary() {
     if (heatmapIcaoId != "") {
         str += "<br/>IcaoId: "+heatmapIcaoId;
     }
+
+    if (heatmapOfAllUsers == true) {
+        str = "All users ever registered: "+heatmapCoords.length;
+    } else if (heatmapOfUniqueUsers == true) {
+        str = "Users active over past "+getDuration()+": "+heatmapCoords.length;
+    }
+
     return str;
 }
 
@@ -103,8 +131,16 @@ function clearHeatmapCoords() {
 function fetchAndPaintNewHeatmap(duration, callback) {
     var url = "https://stop.jetnoise.net/heatmap?d=" + duration;
 
+    if (heatmapOfUniqueUsers == true) {
+        url += "&uniques=1";
+    }
+
     if (heatmapIcaoId != "") {
         url += "&icaoid=" + heatmapIcaoId;
+    }
+
+    if (heatmapOfAllUsers == true) {
+        url += "&allusers=1" // This causes all other args to be ignored
     }
     
     $.getJSON(url, function(arrayData){

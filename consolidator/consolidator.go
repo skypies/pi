@@ -295,7 +295,7 @@ func trackVitals() {
 				for _,k := range keys {
 					v := receivers[k]
 					rcvrs += fmt.Sprintf(
-						"    %-15.15s: %7d msgs, %7d bundles, last %.1f s\n",
+						"    %-15.15s: %9d msgs, %8d bundles, last %.1f s\n",
 						k, v.NumMessagesSent, v.NumBundlesSent, time.Since(v.LastBundleTime).Seconds())
 				}
 
