@@ -8,10 +8,9 @@
 // You may need to deploy some datastore indices, too:
 //   $ aedeploy gcloud preview app deploy ./index.yaml --promote --bucket gs://gcloud-arse
 
-// You can it also run it locally ...
+// You can it also run it locally with the appengine=false flag:
 //   $ go run consolidator.go -ae=false -input=testing    [attaches to a testing topic]
-//   $ go run consolidator.go -ae=false                   [attaches to prod topic, but with new subscription]
-
+//   $ go run consolidator.go -ae=false                   [prod topic, but with new subscription]
 
 package main
 
@@ -21,14 +20,14 @@ import (
 	"flag"
 	"fmt"
 	"hash/fnv"
-	"io/ioutil"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"sort"
 	"time"
+
+	gpubsub "cloud.google.com/go/pubsub"
 
 	"golang.org/x/net/context"
 
@@ -40,8 +39,9 @@ import (
 	fdb "github.com/skypies/flightdb2"
 	"github.com/skypies/flightdb2/fgae"
 	"github.com/skypies/pi/airspace"
-	"github.com/skypies/util/metrics"
+	"github.com/skypies/util/gaeutil"
 	"github.com/skypies/util/histogram"
+	"github.com/skypies/util/metrics"
 	"github.com/skypies/util/pubsub"
 )
 
@@ -53,9 +53,7 @@ var (
 	fProjectName           string
 	fPubsubInputTopic      string
 	fPubsubSubscription    string
-	fPubsubOutputTopic     string
 	fOnAppEngine           bool
-	fTrackPostURL          string
 	
 	Log                   *log.Logger
 )
@@ -73,9 +71,6 @@ func init() {
 		"Name of the pubsub topic we read from (i.e. add our subscription to)")
 	flag.StringVar(&fPubsubSubscription, "sub", "consolidator",
 		"Name of the pubsub subscription on the adsb-inbound topic")
-	flag.StringVar(&fPubsubOutputTopic, "output", "adsb-consolidated",
-		"Name of the pubsub topic to post deduped output on (short name, not projects/blah...)")
-	flag.StringVar(&fTrackPostURL, "trackpost", "", "e.g. http://localhost:8080/fdb/add-frag")
 	flag.BoolVar(&fOnAppEngine, "ae", true, "on appengine (use http://metadata/ etc)")
 	flag.Parse()
 
@@ -89,23 +84,14 @@ func init() {
 }
 
 // }}}
-// {{{ setup
-
-// Can't call this until we've got some kind of context
-func setup(ctx context.Context) {	
-}
-
-// }}}
-// {{{ getBaseContext
-
-// This is fiddly.
+// {{{ getContext
 
 // If we're on appengine, use their special background context; we
 // need it to talk to appengine services such as Memcache. If we're
-// not on appengine, https://metadata/ won't exist and so we can't
-// use the appengine context; but any old context will do.
+// not on appengine, https://metadata/ won't exist and so we can't use
+// the appengine context; but in that case any old context will do.
 
-func getBaseContext() context.Context {
+func getContext() context.Context {
 	if fOnAppEngine {
 		return appengine.BackgroundContext()
 	}
@@ -114,44 +100,141 @@ func getBaseContext() context.Context {
 
 // }}}
 
-// {{{ flushTrackToPOST
-
-func flushTrackToPOST(msgs []*adsb.CompositeMsg) {
-	if len(msgs) == 0 {
-		Log.Printf("No messages to post!\n")
-		return
-	}
-	
-	msgsBase64,_ := adsb.Base64EncodeMessages(msgs)
-	debugUrl := fTrackPostURL + "?callsign=" + msgs[0].Callsign
-	resp,err := http.PostForm(debugUrl, url.Values{ "msgs": {msgsBase64} })
-	if err != nil {
-		Log.Printf("flushPost/POST: %v\n", err)
-		return
-	}
-
-	body,_ := ioutil.ReadAll(resp.Body)		
-	Log.Printf(" ------------> %s",body)
-	//defer resp.Body.Close()
-}
-
-// }}}
 // {{{ flushTrackToDatastore
 
-func flushTrackToDatastore(msgs []*adsb.CompositeMsg) {
-	if len(msgs) == 0 {
+func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
+	if ! fOnAppEngine {
+		//Log.Printf(" -- (%d pushed for %s)\n", len(msgs), string(msgs[0].Icao24))
+		vitalsRequestChan<- VitalsRequest{Name: "_dbwrite", J:int64(myId)}
 		return
 	}
 
-	// For now, don't persist any MLAT data
-	// :O   if msgs[0].DataSystem() != "ADSB" { return }
+	tStart := time.Now()
 
+	db := fgae.FlightDB{C:getContext()}
 	frag := fdb.MessagesToTrackFragment(msgs)
-	db := fgae.FlightDB{C:getBaseContext()}
 
 	if err := db.AddTrackFragment(frag); err != nil {
 		Log.Printf("flushPost/ToDatastore: %v\n", err)
 	}
+
+	vitalsRequestChan<- VitalsRequest{
+		Name: "_dbwrite",
+		I:(time.Since(tStart).Nanoseconds() / 1000000),
+		J:int64(myId),
+	}
+}
+
+// }}}
+// {{{ pushAirspaceToMemcache
+
+var tLastMemcache = time.Now()
+
+func pushAirspaceToMemcache(ctx context.Context, as *airspace.Airspace) {
+	if time.Since(tLastMemcache) < 500 * time.Millisecond { return }
+
+	// Take from airspace/memcache:JustAircraftToMemcache, and goroutinzed
+	justAircraft := airspace.Airspace{Aircraft: as.Aircraft}
+	if b,err := justAircraft.ToBytes(); err == nil {
+		go func(){
+			tStart := time.Now()
+
+			if err := gaeutil.SaveSingletonToMemcache(ctx, "airspace", b); err != nil {
+				Log.Printf("main/JustAircraftToMemcache: err: %v", err)
+			} else {
+				vitalsRequestChan<- VitalsRequest{
+					Name: "_memcache",
+					I:(time.Since(tStart).Nanoseconds() / 1000000),
+				}
+			}
+		}()
+	}
+	
+	tLastMemcache = time.Now()
+}
+
+// }}}
+// {{{ iteratePubsubForever
+
+// Keep reading the pubsub iterator indefinitely. Will return in two cases:
+//  1. the done channel wakes up (returns nil) (or, somehow, it.Stop was called)
+//  2. an error is encountered (returns err)
+func iteratePubsubForever(ctx context.Context, pc *gpubsub.Client, as *airspace.Airspace, msgsOut chan<- []*adsb.CompositeMsg) error {
+
+	it,err := pc.Subscription(fPubsubSubscription).Pull(ctx)
+	if err != nil { return fmt.Errorf("pc.Sub(%s).Pull err:%v", fPubsubSubscription, err) }
+	
+	tPrevEnd := time.Now()
+
+	tLastFreshIterator := time.Now()
+	dIteratorLifetime := time.Hour
+	
+	for {
+		if weAreDone() { break } // Clean exit
+
+		if time.Since(tLastFreshIterator) > dIteratorLifetime {
+			it.Stop()
+			return fmt.Errorf("expiring iterator on purpose")
+		}
+		
+		tStart := time.Now()
+
+		m,err := it.Next()
+		if err == iterator.Done {
+			break
+		} else if err != nil {
+			it.Stop()
+			return fmt.Errorf("it.Next err:%v", err)
+		}
+
+		m.Done(true) // Acknowledge the message.
+
+		msgs,err := pubsub.UnpackPubsubMessage(m)
+		if err != nil {
+			Log.Printf("Unpack: err: %v", fPubsubSubscription, err)
+			time.Sleep(time.Second * 10)
+			continue
+		}
+
+		tPullDone := time.Now()
+		tMsgsSent := tPullDone
+		newMsgs := as.MaybeUpdate(msgs)
+
+		if len(newMsgs) > 0 {
+			// Pass them to the other goroutine for dissemination, and get back to business.
+			msgsOut <- newMsgs
+			tMsgsSent = time.Now()
+
+			if fOnAppEngine {
+				pushAirspaceToMemcache(ctx, as)
+			} else {
+				Log.Printf("- %2d were new (%2d already seen) - %s",
+					len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
+			}
+		}
+
+		// Update our vital stats, with info about this bundle
+		//airspaceBytes,_ := as.ToBytes()
+		vitalsRequestChan<- VitalsRequest{
+			Name: "_bundle",
+			Str:msgs[0].ReceiverName,
+			I:int64(len(msgs)),
+			J:int64(len(newMsgs)),
+
+			// Some primitive wait state data (latencies in millis)
+			L:(tPullDone.Sub(tStart).Nanoseconds() / 1000000),
+			M:(tMsgsSent.Sub(tPullDone).Nanoseconds() / 1000000),
+			N:(tStart.Sub(tPrevEnd).Nanoseconds() / 1000000),  // prelude/zombie time
+			
+			//Str2: as.String(),
+			//K: int64(len(airspaceBytes)),
+			T: msgs[len(msgs)-1].GeneratedTimestampUTC,
+		}
+		tPrevEnd = time.Now()
+	}
+
+	it.Stop()
+	return nil
 }
 
 // }}}
@@ -164,12 +247,22 @@ func startHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // }}}
-// {{{ stopHandler
+// {{{ stopHandler, weAreDone
 
 func stopHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("(stopHandler)\n")
 	close(done) // Shut down the pubsub goroutine (which should save airspace into datastore.)
 	w.Write([]byte("OK"))	
+}
+
+var done = make(chan struct{}) // Gets closed when everything is done
+func weAreDone() bool {
+	select{
+	case <-done:
+		return true
+	default:
+		return false
+	}
 }
 
 // When running a local instance ...
@@ -210,7 +303,7 @@ var vitalsRequestChan = make(chan VitalsRequest, 40)
 var vitalsResponseChan = make(chan string, 5)  // Only used for stats output
 
 type VitalsRequest struct {
-	Name             string  // _output, _reset, or _update
+	Name             string  // _blah
 	Str,Str2         string
 	I,J,K,L,M,N,O,P  int64
 	T                time.Time
@@ -239,10 +332,10 @@ func trackVitals() {
 			if req.Name == "_reset" {
 				counters = map[string]int64{}
 				receivers = map[string]ReceiverSummary{}
-				startupTime = time.Now().Round(time.Second)
+				workers = map[string]int64{}
+				m = metrics.NewMetrics()
 
-			} else if req.Name == "_update" {
-				// This represents "we received a bundle", and we update according to the LastMsg
+			} else if req.Name == "_bundle" {
 				s := receivers[req.Str]
 				s.NumBundlesSent += 1
 				s.NumMessagesSent += req.I
@@ -252,21 +345,18 @@ func trackVitals() {
 				counters["nAll"] += req.I
 				counters["nNew"] += req.J
 				counters["nDupes"] += (req.I - req.J)
-				strings["airspaceSize"] = fmt.Sprintf("%d", req.K)
-				strings["airspaceText"] = req.Str2
-
-				// Update metrics
 				m.RecordValue("BundleSize", req.I)
-				//m.RecordValue("NumSleeps", req.L) // L unused
-				m.RecordValue("PullMillis", req.M)
-				m.RecordValue("ToQueueMillis", req.N)
-				m.RecordValue("MemcacheMillis", req.O)
-				m.RecordValue("PreludeMillis", req.P)
+				m.RecordValue("PullMillis", req.L)
+				m.RecordValue("ToQueueMillis", req.M)
+				m.RecordValue("PreludeMillis", req.N)
 
-			} else if req.Name == "_flush" {
+			} else if req.Name == "_dbwrite" {
 				m.RecordValue("DBWriteMillis", req.I)
 				workers[fmt.Sprintf("%03d",req.J)]++
 				counters["nFrags"]++
+
+			} else if req.Name == "_memcache" {
+				m.RecordValue("MemcacheMillis", req.I)
 				
 			} else if req.Name == "_output" {
 				rcvrs := ""
@@ -296,20 +386,15 @@ func trackVitals() {
 				str := fmt.Sprintf(
 						"* %d messages (%d dupes; %d total; %d bundles received, %d frags written)\n"+
 						"* Uptime: %s (started %s)\n"+
-						"* Preload: %s\n"+
 						"\n"+
 						"* Receivers:-\n%s\n"+
 						"* Worker workloads: %s\n\n"+
-						"* Metrics:-\n%s\n"+
-						"* Airspace (%s bytes, incl. deduping):-\n%s\n",
+						"* Metrics:-\n%s\n",
 					counters["nNew"], counters["nDupes"], counters["nAll"], counters["nBundles"], counters["nFrags"],
 					time.Second * time.Duration(int(time.Since(startupTime).Seconds())), startupTime,
-					strings["loadedOnStartup"],
 					rcvrs,
 					workerHist,
-					m.String(),
-					strings["airspaceSize"],
-					strings["airspaceText"])
+					m.String())
 
 				vitalsResponseChan <- str
 
@@ -324,14 +409,14 @@ func trackVitals() {
 // {{{ pullNewFromPubsub
 
 func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
-	ctx := getBaseContext()
+	ctx := getContext()
 
 	pc := pubsub.NewClient(ctx, fProjectName)
 	if fOnAppEngine {
-		pubsub.Setup(ctx, pc, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
+		pubsub.Setup(ctx, pc, fPubsubInputTopic, fPubsubSubscription)
 	} else {
 		fPubsubSubscription += "-DEV"
-		pubsub.Setup(ctx, pc, fPubsubInputTopic, fPubsubSubscription, fPubsubOutputTopic)
+		pubsub.Setup(ctx, pc, fPubsubInputTopic, fPubsubSubscription)
 		pubsub.DeleteSub(ctx, pc, fPubsubSubscription)
 		pubsub.CreateSub(ctx, pc, fPubsubSubscription, fPubsubInputTopic)
 	}
@@ -340,99 +425,24 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 	// Setup our primary piece of state: the airspace. Load it from last time if we can.
 	as := airspace.Airspace{}
 	if fOnAppEngine {
-		loadedOnStartup := ""
 		if err := as.EverythingFromMemcache(ctx); err != nil {
 			Log.Printf("airspace.EverythingFromMemcache: %v", err)
-			loadedOnStartup = fmt.Sprintf("error loading: %v", err)
 			as = airspace.Airspace{}
-		} else {
-			loadedOnStartup = fmt.Sprintf("loaded sigs=(%d,%d), aircraft=%d, age=%s",
-				len(as.Signatures.CurrMsgs),len(as.Signatures.PrevMsgs),
-				len(as.Aircraft), as.Youngest())
 		}
-		vitalsRequestChan<- VitalsRequest{Name: "loadedOnStartup", Str:loadedOnStartup}
 	}
 
 	Log.Printf("(now pulling from topic:sub %s:%s)", fPubsubInputTopic, fPubsubSubscription)
 
-	tPrevEnd := time.Now()
-
-outerLoop: // attempts to setup a new infinite iterator
 	for {
 		if weAreDone() { break }
-		tStart := time.Now()
+		Log.Printf("(starting a new outerloop)")
 
-		it,err := pc.Subscription(fPubsubSubscription).Pull(ctx)
-		if err != nil {
-			Log.Printf("Pull/sub=%s: err: %s", fPubsubSubscription, err)
-			time.Sleep(time.Second * 10)
-		}
+		err := iteratePubsubForever(ctx, pc, &as, msgsOut)
+		if err == nil { break } // Planned exit via weAreDone
 
-	innerLoop: // read the iterator until we are killed
-		for {
-			if weAreDone() {
-				it.Stop()
-				break outerLoop
-			}
-			m,err := it.Next()
-			if err == iterator.Done {
-        // There are no more messages.  This will happen if it.Stop is called.
-        break innerLoop
-			} else if err != nil {
-				Log.Printf("it.Next/sub=%s: err: %s", fPubsubSubscription, err)
-        break innerLoop
-			}
-
-			m.Done(true) // Acknowledge the message.
-
-			msgs,err := pubsub.UnpackPubsubMessage(m)
-			if err != nil {
-				Log.Printf("Unpack/sub=%s: err: %s", fPubsubSubscription, err)
-				time.Sleep(time.Second * 10)
-				continue
-			}
-
-			tPullDone := time.Now()
-			tMsgsSent := tPullDone
-			newMsgs := as.MaybeUpdate(msgs)
-		
-			if len(newMsgs) > 0 {
-				// Pass them to the other goroutine for dissemination, and get back to business.
-				msgsOut <- newMsgs
-				tMsgsSent = time.Now()
-
-				if fOnAppEngine {
-					if err := as.JustAircraftToMemcache(ctx); err != nil {
-						Log.Printf("main/JustAircraftToMemcache: err: %v", err)
-					}
-				} else {
-					Log.Printf("- %2d were new (%2d already seen) - %s",
-						len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
-				}
-			}
-			tMemcacheDone := time.Now()
-
-			// Update our vital stats, with info about this bundle
-			airspaceBytes,_ := as.ToBytes()
-			vitalsRequestChan<- VitalsRequest{
-				Name: "_update",
-				Str:msgs[0].ReceiverName,
-				I:int64(len(msgs)),
-				J:int64(len(newMsgs)),
-
-				// Some primitive wait state data (latencies in millis)
-				L:0, // unsused
-				M:(tPullDone.Sub(tStart).Nanoseconds() / 1000000),
-				N:(tMsgsSent.Sub(tPullDone).Nanoseconds() / 1000000),
-				O:(tMemcacheDone.Sub(tMsgsSent).Nanoseconds() / 1000000),
-				P:(tStart.Sub(tPrevEnd).Nanoseconds() / 1000000),  // prelude/zombie time
-
-				Str2: as.String(),
-				K: int64(len(airspaceBytes)),
-				T: msgs[len(msgs)-1].GeneratedTimestampUTC,
-			}
-			tPrevEnd = time.Now()
-		}
+		// Unplanned exit; close down iterator, wait a few secs, and start another
+		Log.Printf("(iteratePubsubForever failed: %s)", err)
+		time.Sleep(2 * time.Second)
 	}
 
 	if fOnAppEngine {
@@ -442,7 +452,7 @@ outerLoop: // attempts to setup a new infinite iterator
 		}
 
 	} else {
-		// We're not on AppEngine; this is a wasteful subscription
+		// We're not on AppEngine; clean up our wasteful subscription
 		if err := pubsub.DeleteSub(ctx, pc, fPubsubSubscription); err != nil {
 			Log.Printf(" -- pullNewFromPubsub clean exit; del '%s': %v", fPubsubSubscription, err)
 		}			
@@ -458,22 +468,20 @@ func bufferTracks(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*adsb.Com
 	// Our primary piece of state ! It groups msgs into tracks for distinct aircraft, and
 	// then flushes out individual tracks as/when they have data older than MaxAge
 	tb := trackbuffer.NewTrackBuffer()
-	//tb.MaxAge = time.Second*300
 
 	for {
 		select {
 		case <-time.After(time.Second):
 		case msgs := <-msgsIn:
-			//Log.Printf("buffertracks: received %d msgs\n", len(msgs))
 			for _,m := range msgs {
 				tb.AddMessage(m)
 			}
 			tb.Flush(msgsOut)
-			//if fPubsubOutputTopic != "" {} // If we ever wanted to publish a consolidated stream, start here
 		}
 			
 		if weAreDone() { break }
 	}
+
 	Log.Printf(" -- bufferTracks clean exit\n")
 }
 
@@ -485,17 +493,14 @@ func workerDispatch(msgsIn <-chan []*adsb.CompositeMsg, workersOut []chan []*ads
 		select {
 		case <-time.After(time.Second):
 		case msgs := <-msgsIn:
-			// pick a worker, based on the icao24; it's important that we don't process frags for the same icaoid
-			// in parallel, or we'll suffer a write-write conflict and overwrite some data.
-			h := fnv.New32()
+			// pick a worker, based on the icao24; it's important that we
+			// don't process frags for the same icaoid in parallel, or we'll
+			// suffer a write-write conflict and overwrite some data.
+			h := fnv.New32a()
 			h.Write([]byte(msgs[0].Icao24))
 			i := h.Sum32()
-			workerId := i % uint32(len(workersOut))
-
-			// Log.Printf("{%s} -> %20.20d (%% %d) -> %6d", string(msgs[0].Icao24), i, len(workersOut), workerId)
-
-			// Send the message frag to the worker.
-			workersOut[workerId] <- msgs
+			workerId := (i >> 0) % uint32(len(workersOut))
+			workersOut[workerId] <- msgs // Send the message frag to the worker.
 		}
 
 		if weAreDone() { break }
@@ -508,29 +513,16 @@ func workerDispatch(msgsIn <-chan []*adsb.CompositeMsg, workersOut []chan []*ads
 
 // The worker bee function
 func flushTracks(myId int, msgsIn <-chan []*adsb.CompositeMsg) {
-	Log.Printf("(flushTracks/%03d starting)\n", myId)
+	//Log.Printf("(flushTracks/%03d starting)\n", myId)
 
 	for {
+		if weAreDone() { break }
+
 		select {
 		case <-time.After(time.Second):
 		case msgs := <-msgsIn:
-			tStart := time.Now()
-			if fOnAppEngine {
-				flushTrackToDatastore(msgs)
-			} else if fTrackPostURL != "" {
-				flushTrackToPOST(msgs)
-			// } else {
-			//	Log.Printf(" -- (%d pushed for %s)\n", len(msgs), string(msgs[0].Icao24))
-			}
-
-			vitalsRequestChan<- VitalsRequest{
-				Name: "_flush",
-				I:(time.Since(tStart).Nanoseconds() / 1000000),
-				J:int64(myId),
-			}
-		}
-			
-		if weAreDone() { break }
+			flushTrackToDatastore(myId, msgs)
+		}			
 	}
 
 	Log.Printf(" -- flushTracks/%03d clean exit\n", myId)
@@ -540,16 +532,6 @@ func flushTracks(myId int, msgsIn <-chan []*adsb.CompositeMsg) {
 
 // {{{ main
 
-var done = make(chan struct{}) // Gets closed when everything is done
-func weAreDone() bool {
-	select{
-	case <-done:
-		return true
-	default:
-		return false
-	}
-}
-
 func main() {
 	Log.Printf("(main)\n")
 
@@ -557,7 +539,8 @@ func main() {
 	msgChan2 := make(chan []*adsb.CompositeMsg, 3)
 	workerChans := []chan []*adsb.CompositeMsg{}
 
-	nWorkers := 2//128 // avoid getting backed up on DB writes
+	nWorkers := 256 // avoid getting backed up on DB writes
+	if !fOnAppEngine { nWorkers = 16 }
 	for i:=0; i<nWorkers; i++ {
 		workerChan := make(chan []*adsb.CompositeMsg, 3)
 		workerChans = append(workerChans, workerChan)
@@ -565,13 +548,13 @@ func main() {
 	}
 
 	go pullNewFromPubsub(msgChan1)           // sends mixed bundles down chan1
-	go bufferTracks(msgChan1, msgChan2)      // ... sorts messages into per-flight frags, sends them down chan2 ...
-	go workerDispatch(msgChan2, workerChans) // ... takes a per-flight frag, picks a workerChan to handle it
+	go bufferTracks(msgChan1, msgChan2)      // ... sorts msgs into per-flight frags, into chan2 ...
+	go workerDispatch(msgChan2, workerChans) // ... takes a per-flight frag, shards over workerChans
 
 	// Manage vital statistics in a thread safe way
 	go trackVitals()
 	
-	// Now do basically nothing in the main thread
+	// Now do basically nothing in the main goroutine
 	if fOnAppEngine {
 		appengine.Main()		
 	} else {
