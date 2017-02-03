@@ -84,6 +84,58 @@ func init() {
 }
 
 // }}}
+
+// {{{ {start,stop,status,reset}Handler
+
+func startHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Printf("(startHandler)\n")
+	w.Write([]byte("OK"))	
+}
+
+func stopHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Printf("(stopHandler)\n")
+	close(done) // Shut down the pubsub goroutine (which should save airspace into datastore.)
+	w.Write([]byte("OK"))	
+}
+
+func statusHandler(w http.ResponseWriter, r *http.Request) {
+	vitalsRequestChan<- VitalsRequest{Name:"_output"}
+	str := <-vitalsResponseChan
+	w.Write([]byte(fmt.Sprintf("OK\n%s", str)))
+}
+
+func resetHandler(w http.ResponseWriter, r *http.Request) {
+	vitalsRequestChan<- VitalsRequest{Name:"_reset"}
+	w.Write([]byte(fmt.Sprintf("OK\n")))
+}
+
+// }}}
+
+// {{{ weAreDone
+
+var done = make(chan struct{}) // Gets closed when everything is done
+func weAreDone() bool {
+	select{
+	case <-done:
+		return true
+	default:
+		return false
+	}
+}
+
+// When running a local instance ...
+func addSIGINTHandler() {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+
+	go func(sig <-chan os.Signal){
+		<-sig
+		Log.Printf("(SIGINT received)\n")
+		close(done)
+	}(c)
+}
+
+// }}}
 // {{{ getContext
 
 // If we're on appengine, use their special background context; we
@@ -99,7 +151,6 @@ func getContext() context.Context {
 }
 
 // }}}
-
 // {{{ flushTrackToDatastore
 
 func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
@@ -226,8 +277,6 @@ func iteratePubsubForever(ctx context.Context, pc *gpubsub.Client, as *airspace.
 			M:(tMsgsSent.Sub(tPullDone).Nanoseconds() / 1000000),
 			N:(tStart.Sub(tPrevEnd).Nanoseconds() / 1000000),  // prelude/zombie time
 			
-			//Str2: as.String(),
-			//K: int64(len(airspaceBytes)),
 			T: msgs[len(msgs)-1].GeneratedTimestampUTC,
 		}
 		tPrevEnd = time.Now()
@@ -235,63 +284,6 @@ func iteratePubsubForever(ctx context.Context, pc *gpubsub.Client, as *airspace.
 
 	it.Stop()
 	return nil
-}
-
-// }}}
-
-// {{{ startHandler
-
-func startHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("(startHandler)\n")
-	w.Write([]byte("OK"))	
-}
-
-// }}}
-// {{{ stopHandler, weAreDone
-
-func stopHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("(stopHandler)\n")
-	close(done) // Shut down the pubsub goroutine (which should save airspace into datastore.)
-	w.Write([]byte("OK"))	
-}
-
-var done = make(chan struct{}) // Gets closed when everything is done
-func weAreDone() bool {
-	select{
-	case <-done:
-		return true
-	default:
-		return false
-	}
-}
-
-// When running a local instance ...
-func addSIGINTHandler() {
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-
-	go func(sig <-chan os.Signal){
-		<-sig
-		Log.Printf("(SIGINT received)\n")
-		close(done)
-	}(c)
-}
-
-// }}}
-// {{{ statusHandler
-
-func statusHandler(w http.ResponseWriter, r *http.Request) {
-	vitalsRequestChan<- VitalsRequest{Name:"_output"}
-	str := <-vitalsResponseChan
-	w.Write([]byte(fmt.Sprintf("OK\n%s", str)))
-}
-
-// }}}
-// {{{ resetHandler
-
-func resetHandler(w http.ResponseWriter, r *http.Request) {
-	vitalsRequestChan<- VitalsRequest{Name:"_reset"}
-	w.Write([]byte(fmt.Sprintf("OK\n")))
 }
 
 // }}}
@@ -324,11 +316,13 @@ func trackVitals() {
 	m := metrics.NewMetrics()
 	
 	for {
-		if weAreDone() { return }
+		if weAreDone() { break }
 
 		select {
-		case req := <-vitalsRequestChan:
+		case <-time.After(time.Second):
+			// break
 
+		case req := <-vitalsRequestChan:
 			if req.Name == "_reset" {
 				counters = map[string]int64{}
 				receivers = map[string]ReceiverSummary{}
@@ -359,6 +353,8 @@ func trackVitals() {
 				m.RecordValue("MemcacheMillis", req.I)
 				
 			} else if req.Name == "_output" {
+				// {{{ fmt
+
 				rcvrs := ""
 				keys := []string{}
 				for k,_ := range receivers { keys = append(keys,k) }
@@ -396,6 +392,8 @@ func trackVitals() {
 					workerHist,
 					m.String())
 
+				// }}}
+
 				vitalsResponseChan <- str
 
 			} else if req.Name != "" {
@@ -403,6 +401,8 @@ func trackVitals() {
 			}
 		}
 	}
+
+	Log.Printf(" -- trackVitals clean exit\n")
 }
 
 // }}}
@@ -435,6 +435,7 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 
 	for {
 		if weAreDone() { break }
+
 		Log.Printf("(starting a new outerloop)")
 
 		err := iteratePubsubForever(ctx, pc, &as, msgsOut)
@@ -470,16 +471,17 @@ func bufferTracks(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*adsb.Com
 	tb := trackbuffer.NewTrackBuffer()
 
 	for {
+		if weAreDone() { break }
+
 		select {
 		case <-time.After(time.Second):
+			// break
 		case msgs := <-msgsIn:
 			for _,m := range msgs {
 				tb.AddMessage(m)
 			}
 			tb.Flush(msgsOut)
 		}
-			
-		if weAreDone() { break }
 	}
 
 	Log.Printf(" -- bufferTracks clean exit\n")
@@ -490,8 +492,11 @@ func bufferTracks(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*adsb.Com
 
 func workerDispatch(msgsIn <-chan []*adsb.CompositeMsg, workersOut []chan []*adsb.CompositeMsg) {
 	for {
+		if weAreDone() { break }
+
 		select {
 		case <-time.After(time.Second):
+			// break
 		case msgs := <-msgsIn:
 			// pick a worker, based on the icao24; it's important that we
 			// don't process frags for the same icaoid in parallel, or we'll
@@ -499,11 +504,9 @@ func workerDispatch(msgsIn <-chan []*adsb.CompositeMsg, workersOut []chan []*ads
 			h := fnv.New32a()
 			h.Write([]byte(msgs[0].Icao24))
 			i := h.Sum32()
-			workerId := (i >> 0) % uint32(len(workersOut))
+			workerId := i % uint32(len(workersOut))
 			workersOut[workerId] <- msgs // Send the message frag to the worker.
 		}
-
-		if weAreDone() { break }
 	}
 	Log.Printf(" -- workerDispatch clean exit\n")
 }
@@ -520,12 +523,13 @@ func flushTracks(myId int, msgsIn <-chan []*adsb.CompositeMsg) {
 
 		select {
 		case <-time.After(time.Second):
+			// break
 		case msgs := <-msgsIn:
 			flushTrackToDatastore(myId, msgs)
 		}			
 	}
 
-	Log.Printf(" -- flushTracks/%03d clean exit\n", myId)
+	Log.Printf(" ---- flushTracks/%03d clean exit\n", myId)
 }
 
 // }}}
@@ -562,7 +566,7 @@ func main() {
 
 		// Block until done channel lights up
 		<-done
-		time.Sleep(time.Second * 20)  // Give the pubsub loop a chance to unblock and exit
+		time.Sleep(time.Second * 4)  // Give the pubsub loop a chance to unblock and exit
 		Log.Printf("(main clean exit)\n")
 	}
 }
