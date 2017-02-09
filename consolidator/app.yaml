@@ -1,5 +1,5 @@
 runtime: go
-module: consolidator
+service: consolidator
 api_version: 1
 vm: true
 manual_scaling:
@@ -14,11 +14,5 @@ resources:
   disk_size_gb: 10
   
 handlers:
-- url: /_ah/start
-  script: _go_app
-- url: /
-  script: _go_app
-- url: /status
-  script: _go_app
-- url: /reset
+- url: /.*
   script: _go_app
