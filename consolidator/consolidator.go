@@ -61,7 +61,7 @@ var (
 
 	tGlobalStart           time.Time
 	stackTraceBytes      []byte
-	
+
 	Log                   *log.Logger
 )
 
@@ -448,15 +448,15 @@ func trackVitals() {
 				}
 
 				str := fmt.Sprintf(
-						"* %d messages (%d dupes; %d total; %d bundles received, %d frags written)\n"+
-						"* Uptime: %s (started %s; last bundle:%s, %d wedges)\n"+
+						"* %d messages (%d dupes; %d total; %d bundles; %d writes)\n"+
+						"* Uptime: %s (started %s; last bundle:%5.3fs; %d wedges)\n"+
 						"\n"+
 						"* Receivers:-\n%s\n"+
-						"* Worker workloads: %s\n\n"+
+						"* Workers: %s\n\n"+
 						"* Metrics:-\n%s\n",
 					counters["nNew"], counters["nDupes"], counters["nAll"], counters["nBundles"], counters["nFrags"],
 					time.Second * time.Duration(int(time.Since(startupTime).Seconds())), startupTime,
-					time.Since(lastBundleTime), counters["nWedges"],
+					time.Since(lastBundleTime).Seconds(), counters["nWedges"],
 					rcvrs,
 					workerHist,
 					m.String())
