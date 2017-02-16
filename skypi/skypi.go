@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/skypies/adsb"
@@ -75,11 +76,11 @@ func weAreDone() bool {
 
 func addSIGINTHandler() {
 	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
+	signal.Notify(c, syscall.SIGINT, syscall.SIGHUP)
 
 	go func(sig <-chan os.Signal){
-		<-sig
-		Log.Printf("(SIGINT received)\n")
+		s := <-sig
+		Log.Printf("(SIG[%s] received)\n", s)
 		close(done)
 	}(c)
 }
@@ -161,23 +162,26 @@ outerLoop:
 		}
 		
 		lastBackoff = time.Second
-		Log.Printf("connected to '%s'", hostport)
+		Log.Printf("connected to %q", hostport)
 
-		// a net.Conn implements io.Reader
-		scanner := bufio.NewScanner(conn)
-		for scanner.Scan() { // This can block indefinitely ...
+		reader := bufio.NewReader(conn)
+		for {
 			if weAreDone() { break outerLoop }
-
-			if err := scanner.Err(); err != nil {
-				Log.Printf("killing connection, scanner err: %v\n", err)
+			text,err := reader.ReadString('\n')
+			if err != nil {
+				Log.Printf("killing connection, reader err: %v", err)
 				conn.Close()
 				break // inner
 			}
 
+			if text == "\n" {
+				// dump1090 will print a newline every 30s, if it has nothing else to print.
+				continue
+			}
+
 			msg := adsb.Msg{}
-			text := scanner.Text()
 			if err := msg.FromSBS1(text); err != nil {
-				Log.Printf("killing connection, SBS  input:%q, parse fail: %v", text, err)
+				Log.Printf("killing connection, parse fail; input:%q, err:%v", text, err)
 				break // inner
 			}
 
