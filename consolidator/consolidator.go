@@ -276,8 +276,8 @@ func pullPubsubUntilWedge(ctx context.Context, as *airspace.Airspace, id int, iW
 		// Check if the watchdog timed out on us and started another; if so we should go away.
 		select{
 		case <-iWasDiscarded:
-			Log.Printf("pullPubsubUntilWedge %d woke up, was discarded", id)
-			break
+			Log.Printf("pullPubsubUntilWedge %d woke up, was discarded, aborting", id)
+			return
 		default: // carry on, we've not been discarded
 		}
 		
