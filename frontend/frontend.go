@@ -15,9 +15,9 @@ import (
 	"github.com/skypies/geo/sfo"
 	"github.com/skypies/pi/airspace"
 
-	"github.com/skypies/flightdb2/ref"
-	//"github.com/skypies/flightdb2/fa"
-	"github.com/skypies/flightdb2/fr24"
+	"github.com/skypies/flightdb/ref"
+	//"github.com/skypies/flightdb/fa"
+	"github.com/skypies/flightdb/fr24"
 )
 
 func init() {

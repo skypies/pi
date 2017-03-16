@@ -40,8 +40,8 @@ import (
 
 	"github.com/skypies/adsb"
 	"github.com/skypies/adsb/trackbuffer"
-	fdb "github.com/skypies/flightdb2"
-	"github.com/skypies/flightdb2/fgae"
+	fdb "github.com/skypies/flightdb"
+	"github.com/skypies/flightdb/fgae"
 	"github.com/skypies/pi/airspace"
 	"github.com/skypies/util/gaeutil"
 	"github.com/skypies/util/histogram"

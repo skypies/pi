@@ -7,7 +7,7 @@ import(
 	"time"
 
 	"github.com/skypies/adsb"
-	fdb "github.com/skypies/flightdb2"
+	fdb "github.com/skypies/flightdb"
 )
 
 var	DefaultRollAfter = time.Minute * 5
