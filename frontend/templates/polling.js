@@ -8,8 +8,6 @@
 //
 // StopPolling("hiho");
 
-// http://stackoverflow.com/questions/8682622/using-setinterval-to-do-simplistic-continuos-polling
-
 var pleaseStopFlags = [];
 
 function StopPolling(name) { pleaseStopFlags[name] = true }
@@ -27,8 +25,20 @@ function StartPolling(func, intervalMillis, name) {
         )
     )
 
+    // When the tab stops being visible, stop polling; if it becomes visible, then
+    // resume
+    document.addEventListener('visibilitychange', function () {
+        var currentdate = new Date();
+        if (document.hidden) {
+            console.log("Hidden ! at " + currentdate + "("+name+")")
+            StopPolling(name)
+        } else {
+            console.log("Unhidden ! at " + currentdate + "("+name+")")
+            StartPolling(func, intervalMillis, name)
+        }
+    });
+    
     LoopUntil( () => new Promise(()=>func()), intervalMillis, name )
-    //poll(() => new Promise(() => console.log('Hello World!')), 1000)
 }
 
 {{end}}

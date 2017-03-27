@@ -38,7 +38,7 @@ function initMap() {
 
     StartPolling( function(){
         pollAndPaintAircraft( {{.URLToPoll}} );
-    }, gPollingIntervalMillis);
+    }, gPollingIntervalMillis, "aircraft");
 
     InitHeatmap();
     PollForHeatmap("45s", 2000, 1000*3);
