@@ -12,10 +12,6 @@ import(
 	"github.com/skypies/util/date"
 )
 
-// value="{{sort .AStringSlice | flatten}}"
-var (
-)
-
 func LoadTemplates(dir string) *template.Template {
 	t := template.New("").Funcs(template.FuncMap{
 		"add": templateAdd,

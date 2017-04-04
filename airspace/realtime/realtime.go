@@ -1,4 +1,7 @@
-package main
+// Package airspace/realtime is glue code for fetching a realtime view of the sky from skypi
+// and other online sources, and presenting it on a google map (or as json). It includes
+// a http.HandleFunc.
+package realtime
 
 import (
 	"encoding/json"
@@ -20,26 +23,22 @@ import (
 	"github.com/skypies/flightdb/fr24"
 )
 
-var templates *template.Template
-
-func init() {
-	templates = LoadTemplates("templates")
-	http.HandleFunc("/", SkypiViewHandler)
-}
-
 var(
 	kMaxStaleDuration = time.Second * 30
 	kMaxStaleScheduleDuration = time.Minute * 20
 )
 
-// {{{ SkypiViewHandler
+// {{{ AirspaceHandler
 
-// Renders a google maps page that will start polling for realtime flight positions.
+// AirspaceHandler is a template handler that renders a google maps
+// page, which will start polling for realtime flight positions.
+// Requires the "map-poller" template and friends. If passed the `json=1` argument,
+// will return a JSON rendering of the current state of the sky.
 //
 // /?json=1&box_sw_lat=36.1&box_sw_long=-122.2&box_ne_lat=37.1&box_ne_long=-121.5
 //  &comp=1      (for fr24)
 //  &icao=AF1212 (for limiting heatmaps to one aircraft)
-func SkypiViewHandler(w http.ResponseWriter, r *http.Request) {	
+func AirspaceHandler(w http.ResponseWriter, r *http.Request, templates *template.Template) {	
 	if r.FormValue("json") != "" {
 		jsonOutputHandler(w,r)
 		return
@@ -75,7 +74,6 @@ func jsonOutputHandler(w http.ResponseWriter, r *http.Request) {
 
 	if r.FormValue("comp") != "" {
 		addFr24ToAirspace(c, &as)
-
 		//if r.FormValue("fa") != "" { faToAirspace(c, &as) }
 
 		// Weed out stale stuff (mostly from fa)
@@ -87,7 +85,7 @@ func jsonOutputHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	
-	// Temporary hack, to let goapp serve'd things call the deployed version of this URL
+	// Bodge, to let goapp serve'd things call the deployed version of this URL
 	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:8080")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 	w.Header().Set("Access-Control-Allow-Headers",

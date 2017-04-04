@@ -4,8 +4,8 @@
 package main
 
 // cp serfr0-fdb-blahblah.json ~/.config/gcloud/application_default_credentials.json
-// go get github.com/skypies/pi/skypi
-// GOOS=linux GOARCH=arm go build github.com/skypies/pi/skypi
+// go get github.com/skypies/pi/cmd/skypi
+// GOOS=linux GOARCH=arm go build github.com/skypies/pi/cmd/skypi
 
 // $GOPATH/bin/skypi -receiver="MyStationName"
 // ... maybe also: -h=southpi:30003 -maxage=4s -timeloc="America/Los_angeles" -v=2 -topic=""
