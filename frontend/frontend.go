@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"html/template"
 	"net/http"
 	"strings"
 	"time"
@@ -16,12 +17,14 @@ import (
 	"github.com/skypies/pi/airspace"
 
 	"github.com/skypies/flightdb/ref"
-	//"github.com/skypies/flightdb/fa"
 	"github.com/skypies/flightdb/fr24"
 )
 
+var templates *template.Template
+
 func init() {
-	http.HandleFunc("/", rootHandler)
+	templates = LoadTemplates("templates")
+	http.HandleFunc("/", SkypiViewHandler)
 }
 
 var(
@@ -29,12 +32,14 @@ var(
 	kMaxStaleScheduleDuration = time.Minute * 20
 )
 
-// {{{ rootHandler
+// {{{ SkypiViewHandler
 
+// Renders a google maps page that will start polling for realtime flight positions.
+//
 // /?json=1&box_sw_lat=36.1&box_sw_long=-122.2&box_ne_lat=37.1&box_ne_long=-121.5
 //  &comp=1      (for fr24)
 //  &icao=AF1212 (for limiting heatmaps to one aircraft)
-func rootHandler(w http.ResponseWriter, r *http.Request) {	
+func SkypiViewHandler(w http.ResponseWriter, r *http.Request) {	
 	if r.FormValue("json") != "" {
 		jsonOutputHandler(w,r)
 		return

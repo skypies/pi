@@ -1,3 +1,8 @@
+# DO NOT DEPLOY THIS APP
+# If you are deploying flightdb/ui, as it already does everything.
+# Only deploy this app if you want a realtime maps view without
+# any flightdb stuff.
+
 application: serfr0-fdb
 module: frontend
 version: one
