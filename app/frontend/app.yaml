@@ -4,7 +4,7 @@
 # any flightdb stuff.
 
 application: serfr0-fdb
-module: frontend
+module: pifrontend
 version: one
 runtime: go
 api_version: go1
