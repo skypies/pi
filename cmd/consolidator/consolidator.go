@@ -208,7 +208,7 @@ func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
 
 	tStart := time.Now()
 
-	db := fgae.FlightDB{C:getContext()}
+	db := fgae.NewDB(getContext())
 	frag := fdb.MessagesToTrackFragment(msgs)
 
 	if err := db.AddTrackFragment(frag); err != nil {
