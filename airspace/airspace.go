@@ -4,6 +4,7 @@ package airspace
 import(
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/skypies/adsb"
@@ -34,6 +35,8 @@ type Signatures struct {
 type Airspace struct {
 	Signatures `json:"-"`                  // What we've seen "recently"; for deduping
 	Aircraft map[adsb.IcaoId]AircraftData  // "what is in the sky right now"; for realtime serving
+
+	mutex sync.Mutex // lock for updates
 }
 
 // {{{ NewAirspace
@@ -132,6 +135,9 @@ func (a Airspace)Youngest() time.Duration {
 // If any messages are new, update our view of the world. Return the indicies of the messages
 // we thought were new.
 func (a *Airspace) MaybeUpdate(msgs []*adsb.CompositeMsg) []*adsb.CompositeMsg {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
 	ret := []*adsb.CompositeMsg{}
 
 	// Time to roll (or lazily init) ?

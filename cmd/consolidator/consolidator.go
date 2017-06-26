@@ -31,11 +31,13 @@ import (
 	"os/signal"
 	"runtime"
 	"sort"
+	"sync"
 	"time"
 
+	"cloud.google.com/go/pubsub"
+	
 	"golang.org/x/net/context"
 
-	"google.golang.org/api/iterator"
 	"google.golang.org/appengine"
 
 	"github.com/skypies/adsb"
@@ -46,7 +48,7 @@ import (
 	"github.com/skypies/util/gaeutil"
 	"github.com/skypies/util/histogram"
 	"github.com/skypies/util/metrics"
-	"github.com/skypies/util/pubsub"
+	mypubsub "github.com/skypies/util/pubsub" // This is adding less value over time; kill ?
 )
 
 // }}}
@@ -99,15 +101,15 @@ func init() {
 
 func setupPubsub() {		
 	ctx := getContext()
-	pc := pubsub.NewClient(ctx, fProjectName)
+	pc := mypubsub.NewClient(ctx, fProjectName)
 
 	if fOnAppEngine {
-		pubsub.Setup(ctx, pc, fPubsubInputTopic, fPubsubSubscription)
+		mypubsub.Setup(ctx, pc, fPubsubInputTopic, fPubsubSubscription)
 	} else {
 		fPubsubSubscription += "-DEV"
-		pubsub.Setup(ctx, pc, fPubsubInputTopic, fPubsubSubscription)
-		pubsub.DeleteSub(ctx, pc, fPubsubSubscription)
-		pubsub.CreateSub(ctx, pc, fPubsubSubscription, fPubsubInputTopic)
+		mypubsub.Setup(ctx, pc, fPubsubInputTopic, fPubsubSubscription)
+		mypubsub.DeleteSub(ctx, pc, fPubsubSubscription)
+		mypubsub.CreateSub(ctx, pc, fPubsubSubscription, fPubsubInputTopic)
 	}
 }
 
@@ -226,8 +228,12 @@ func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
 // {{{ pushAirspaceToMemcache
 
 var tLastMemcache = time.Now()
+var memcacheMutex = sync.Mutex{}
 
 func pushAirspaceToMemcache(ctx context.Context, as *airspace.Airspace) {
+	memcacheMutex.Lock()
+	defer memcacheMutex.Unlock()
+
 	if time.Since(tLastMemcache) < 500 * time.Millisecond { return }
 
 	// Take from airspace/memcache:JustAircraftToMemcache, and goroutinzed
@@ -251,63 +257,26 @@ func pushAirspaceToMemcache(ctx context.Context, as *airspace.Airspace) {
 }
 
 // }}}
-// {{{ pullPubsubUntilWedge
+// {{{ pubsubMsgCallback
 
-// Keep reading the pubsub iterator indefinitely, until it errors. May well wedge. If the iAmDone
-// channel closes, will terminate.
-func pullPubsubUntilWedge(ctx context.Context, as *airspace.Airspace, id int, iWasDiscarded <-chan struct{}, msgsOut chan<- []*adsb.CompositeMsg) {
+func newPubsubMsgCallback(as *airspace.Airspace, msgsOut chan<- []*adsb.CompositeMsg) func(context.Context, *pubsub.Message) {
 
-	pc := pubsub.NewClient(ctx, fProjectName)	
-	it,err := pc.Subscription(fPubsubSubscription).Pull(ctx)
-	if err != nil {
-		Log.Printf("pc.Sub(%s).Pull err:%v", fPubsubSubscription, err)
-		return
-	}
-  defer it.Stop()
-
-	Log.Printf("(pubsub innerloop %d: pulling from topic:sub %s:%s)",
-		id, fPubsubInputTopic, fPubsubSubscription)
-
-	tPrevEnd := time.Now()
-	
-	for {
-		if weAreDone() { break } // Clean exit
+	// All objects/routines used in here need to be safe for concurrent access
+	return func(ctx context.Context, m *pubsub.Message) {
+		//tStart := time.Now()
+		//tMsgsSent := tStart
 		
-		// Check if the watchdog timed out on us and started another; if so we should go away.
-		select{
-		case <-iWasDiscarded:
-			Log.Printf("pullPubsubUntilWedge %d woke up, was discarded, aborting", id)
-			return
-		default: // carry on, we've not been discarded
-		}
-		
-		tStart := time.Now()
-
-		m,err := it.Next()
-		if err == iterator.Done {
-			break
-		} else if err != nil {
-			Log.Printf("[%d] it.Next err: %v", id, err)
-			return
-		}
-
-		m.Done(true) // Acknowledge the message.
-
-		msgs,err := pubsub.UnpackPubsubMessage(m)
+		msgs,err := mypubsub.UnpackPubsubMessage(m)
 		if err != nil {
-			Log.Printf("[%d] Unpack: err: %v", id, fPubsubSubscription, err)
-			time.Sleep(time.Second * 10)
-			continue
+			Log.Printf("[%d] Unpack: err: %v", err)
 		}
 
-		tPullDone := time.Now()
-		tMsgsSent := tPullDone
 		newMsgs := as.MaybeUpdate(msgs)
 		
 		if len(newMsgs) > 0 {
 			// Pass them to the other goroutine for dissemination, and get back to business.
 			msgsOut <- newMsgs
-			tMsgsSent = time.Now()
+			//tMsgsSent = time.Now()
 
 			if fOnAppEngine {
 				pushAirspaceToMemcache(ctx, as)
@@ -324,20 +293,17 @@ func pullPubsubUntilWedge(ctx context.Context, as *airspace.Airspace, id int, iW
 			Str:msgs[0].ReceiverName,
 			I:int64(len(msgs)),
 			J:int64(len(newMsgs)),
-			K:int64(id),
+			K:0,
 			
 			// Some primitive wait state data (latencies in millis)
-			L:(tPullDone.Sub(tStart).Nanoseconds() / 1000000),
-			M:(tMsgsSent.Sub(tPullDone).Nanoseconds() / 1000000),
-			N:(tStart.Sub(tPrevEnd).Nanoseconds() / 1000000),  // prelude/zombie time
+			L:0, //(tPullDone.Sub(tStart).Nanoseconds() / 1000000),
+			M:0, //(tMsgsSent.Sub(tPullDone).Nanoseconds() / 1000000),
+			N:0, //(tStart.Sub(tPrevEnd).Nanoseconds() / 1000000),  // prelude/zombie time
 			
 			T: msgs[len(msgs)-1].GeneratedTimestampUTC,
 		}
-		tPrevEnd = time.Now()
+		//tPrevEnd = time.Now()
 	}
-
-	Log.Printf(" -- pullPubsubUntilWedge %d clean exit", id)
-	return
 }
 
 // }}}
@@ -414,9 +380,6 @@ func trackVitals() {
 			} else if req.Name == "_memcache" {
 				m.RecordValue("MemcacheMillis", req.I)
 
-			} else if req.Name == "_pubsubwedge" {
-				counters["nWedges"]++
-				
 			} else if req.Name == "_lastBundleTime" {
 				vitalsResponseChan<- VitalsResponse{T: lastBundleTime}
 
@@ -449,14 +412,14 @@ func trackVitals() {
 
 				str := fmt.Sprintf(
 						"* %d messages (%d dupes; %d total; %d bundles; %d writes)\n"+
-						"* Uptime: %s (started %s; last bundle:%5.3fs; %d wedges)\n"+
+						"* Uptime: %s (started %s; last bundle:%5.3fs)\n"+
 						"\n"+
 						"* Receivers:-\n%s\n"+
 						"* Workers: %s\n\n"+
 						"* Metrics:-\n%s\n",
 					counters["nNew"], counters["nDupes"], counters["nAll"], counters["nBundles"], counters["nFrags"],
 					time.Second * time.Duration(int(time.Since(startupTime).Seconds())), startupTime,
-					time.Since(lastBundleTime).Seconds(), counters["nWedges"],
+					time.Since(lastBundleTime).Seconds(),
 					rcvrs,
 					workerHist,
 					m.String())
@@ -483,8 +446,6 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 
 	setupPubsub()
 	Log.Printf("(pubsub setup done)\n")
-
-	dWedgeThresh := time.Minute // We get ~2.5/s, so nothing for 60s is bad
 	
 	if fOnAppEngine {
 		if err := as.EverythingFromMemcache(ctx); err != nil {
@@ -492,39 +453,24 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 			as = airspace.Airspace{}
 		}
 	}
-	
-	nSpawns := 0
-outerLoop:
-	for {
-		if weAreDone() { break outerLoop }
 
-		Log.Printf("(pubsub: starting from top of outerloop)")
+	cancelCtx, cancelFunc := context.WithCancel(ctx)
 
-		youWereDiscarded := make(chan struct{}) // Closed when we give up on the worker
+	pc := mypubsub.NewClient(cancelCtx, fProjectName)
+	sub := pc.Subscription(fPubsubSubscription)
+	callback := newPubsubMsgCallback(&as, msgsOut)
 
-		go pullPubsubUntilWedge(ctx, &as, nSpawns, youWereDiscarded, msgsOut)
-
-		// Now wait until it all goes wrong; each 5s, check we're still getting bundles.
-	innerLoop:
-		for {
-			if weAreDone() { break outerLoop }
-			time.Sleep(5 * time.Second)
-			
-			vitalsRequestChan<- VitalsRequest{Name:"_lastBundleTime"}
-			vr := <-vitalsResponseChan
-
-			if time.Since(vr.T) > dWedgeThresh {
-				Log.Printf("Watchdog: last bundle was %s ago, respawning (%d)", time.Since(vr.T), nSpawns)
-				vitalsRequestChan<- VitalsRequest{Name: "_pubsubwedge"}
-				nSpawns++
-				break innerLoop
-			}
+	go func() {
+		if err := sub.Receive(cancelCtx, callback); err != nil {
+			Log.Printf("sub.Receive() err:%v", err)
+			return
 		}
-		
-		// Unplanned exit; prob a wedge; tell it to die (if it wakes up), then start up another.
-		close(youWereDiscarded)
-		time.Sleep(2 * time.Second)
-	}
+	}()
+
+	// Block until done channel lights up
+	<-done
+
+	cancelFunc() // terminates call to sub.Receive()
 
 	if fOnAppEngine {
 		// We're shutting down, so save all the deduping signatures
@@ -534,8 +480,8 @@ outerLoop:
 
 	} else {
 		// We're not on AppEngine; clean up our wasteful subscription
-		pc := pubsub.NewClient(ctx, fProjectName)
-		if err := pubsub.DeleteSub(ctx, pc, fPubsubSubscription); err != nil {
+		pc := mypubsub.NewClient(ctx, fProjectName)
+		if err := mypubsub.DeleteSub(ctx, pc, fPubsubSubscription); err != nil {
 			Log.Printf(" -- pullNewFromPubsub clean exit; del '%s': %v", fPubsubSubscription, err)
 		}			
 	}
@@ -653,6 +599,169 @@ func main() {
 }
 
 // }}}
+
+/* Old */
+/*
+// {{{ pullNewFromPubsub
+
+func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
+	ctx := getContext()
+	as := airspace.Airspace{}
+
+	setupPubsub()
+	Log.Printf("(pubsub setup done)\n")
+
+	dWedgeThresh := time.Minute // We get ~2.5/s, so nothing for 60s is bad
+	
+	if fOnAppEngine {
+		if err := as.EverythingFromMemcache(ctx); err != nil {
+			Log.Printf("airspace.EverythingFromMemcache: %v", err)
+			as = airspace.Airspace{}
+		}
+	}
+	
+	nSpawns := 0
+outerLoop:
+	for {
+		if weAreDone() { break outerLoop }
+
+		Log.Printf("(pubsub: starting from top of outerloop)")
+
+		youWereDiscarded := make(chan struct{}) // Closed when we give up on the worker
+
+		go pullPubsubUntilWedge(ctx, &as, nSpawns, youWereDiscarded, msgsOut)
+
+		// Now wait until it all goes wrong; each 5s, check we're still getting bundles.
+	innerLoop:
+		for {
+			if weAreDone() { break outerLoop }
+			time.Sleep(5 * time.Second)
+			
+			vitalsRequestChan<- VitalsRequest{Name:"_lastBundleTime"}
+			vr := <-vitalsResponseChan
+
+			if time.Since(vr.T) > dWedgeThresh {
+				Log.Printf("Watchdog: last bundle was %s ago, respawning (%d)", time.Since(vr.T), nSpawns)
+				vitalsRequestChan<- VitalsRequest{Name: "_pubsubwedge"}
+				nSpawns++
+				break innerLoop
+			}
+		}
+		
+		// Unplanned exit; prob a wedge; tell it to die (if it wakes up), then start up another.
+		close(youWereDiscarded)
+		time.Sleep(2 * time.Second)
+	}
+
+	if fOnAppEngine {
+		// We're shutting down, so save all the deduping signatures
+		if err := as.EverythingToMemcache(ctx); err != nil {
+			Log.Printf(" -- pullNewFromPubsub clean exit; memcache: %v", err)
+		}
+
+	} else {
+		// We're not on AppEngine; clean up our wasteful subscription
+		pc := mypubsub.NewClient(ctx, fProjectName)
+		if err := mypubsub.DeleteSub(ctx, pc, fPubsubSubscription); err != nil {
+			Log.Printf(" -- pullNewFromPubsub clean exit; del '%s': %v", fPubsubSubscription, err)
+		}			
+	}
+	
+	Log.Printf(" -- pullNewFromPubsub clean exit\n")
+}
+
+// }}}
+// {{{ pullPubsubUntilWedge
+
+// Keep reading the pubsub iterator indefinitely, until it errors. May well wedge. If the iAmDone
+// channel closes, will terminate.
+func pullPubsubUntilWedge(ctx context.Context, as *airspace.Airspace, id int, iWasDiscarded <-chan struct{}, msgsOut chan<- []*adsb.CompositeMsg) {
+
+	pc := mypubsub.NewClient(ctx, fProjectName)	
+	it,err := pc.Subscription(fPubsubSubscription).Pull(ctx)
+	if err != nil {
+		Log.Printf("pc.Sub(%s).Pull err:%v", fPubsubSubscription, err)
+		return
+	}
+  defer it.Stop()
+
+	Log.Printf("(pubsub innerloop %d: pulling from topic:sub %s:%s)",
+		id, fPubsubInputTopic, fPubsubSubscription)
+
+	tPrevEnd := time.Now()
+	
+	for {
+		if weAreDone() { break } // Clean exit
+		
+		// Check if the watchdog timed out on us and started another; if so we should go away.
+		select{
+		case <-iWasDiscarded:
+			Log.Printf("pullPubsubUntilWedge %d woke up, was discarded, aborting", id)
+			return
+		default: // carry on, we've not been discarded
+		}
+		
+		tStart := time.Now()
+
+		m,err := it.Next()
+		if err == iterator.Done {
+			break
+		} else if err != nil {
+			Log.Printf("[%d] it.Next err: %v", id, err)
+			return
+		}
+
+		m.Done(true) // Acknowledge the message.
+
+		msgs,err := mypubsub.UnpackPubsubMessage(m)
+		if err != nil {
+			Log.Printf("[%d] Unpack: err: %v", id, fPubsubSubscription, err)
+			time.Sleep(time.Second * 10)
+			continue
+		}
+
+		tPullDone := time.Now()
+		tMsgsSent := tPullDone
+		newMsgs := as.MaybeUpdate(msgs)
+		
+		if len(newMsgs) > 0 {
+			// Pass them to the other goroutine for dissemination, and get back to business.
+			msgsOut <- newMsgs
+			tMsgsSent = time.Now()
+
+			if fOnAppEngine {
+				pushAirspaceToMemcache(ctx, as)
+			} else {
+				//Log.Printf("- %2d were new (%2d already seen) - %s",
+				//	len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
+			}
+		}
+
+		// Update our vital stats, with info about this bundle
+		//airspaceBytes,_ := as.ToBytes()
+		vitalsRequestChan<- VitalsRequest{
+			Name: "_bundle",
+			Str:msgs[0].ReceiverName,
+			I:int64(len(msgs)),
+			J:int64(len(newMsgs)),
+			K:int64(id),
+			
+			// Some primitive wait state data (latencies in millis)
+			L:(tPullDone.Sub(tStart).Nanoseconds() / 1000000),
+			M:(tMsgsSent.Sub(tPullDone).Nanoseconds() / 1000000),
+			N:(tStart.Sub(tPrevEnd).Nanoseconds() / 1000000),  // prelude/zombie time
+			
+			T: msgs[len(msgs)-1].GeneratedTimestampUTC,
+		}
+		tPrevEnd = time.Now()
+	}
+
+	Log.Printf(" -- pullPubsubUntilWedge %d clean exit", id)
+	return
+}
+
+// }}}
+*/
 
 // {{{ -------------------------={ E N D }=----------------------------------
 

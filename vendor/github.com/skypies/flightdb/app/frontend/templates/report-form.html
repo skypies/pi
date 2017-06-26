@@ -1,0 +1,306 @@
+{{define "report-form"}}
+
+<html>
+  {{template "header"}}
+  <body>
+    <h1>{{.Title}}</h1><p/>
+
+    <form action="{{.FormUrl}}" method="get">
+      <div class="stack" style="max-width:600px">
+
+        {{if .UIOptions.UserEmail}}<p>Hello, <code>{{.UIOptions.UserEmail}}</code>.</p>
+        {{else}}<p>User not logged in - <a href="{{.UIOptions.LoginUrl}}">login here</a>.</p>
+        {{end}}
+        
+        <div class="box">
+
+        <table border="0">
+
+          <tr>
+            <td>Report Type</td>
+            <td><select name="rep">
+                {{range .Reports}}
+                <option value="{{.Name}}">{{.Description}}</option>{{end}}
+            </select></td>
+          </tr>
+
+          <tr><td colspan="2"><hr/></td></tr>
+          <tr><td colspan="2"><b>Flight restrictions</b> - efficiently
+          trim the dataset.<br/>
+          </td></tr>
+          <tr>
+            <td>Flight tags</td>
+            <td><input type="text" name="tags" size="12" value=""/>
+            (e.g. <code>:SFO_S</code>,<code>OCEANIC:</code>,<code>:SFO</code>)</td>
+          </tr>
+          <tr>
+            <td>But EXCLUDING tags</td>
+            <td><input type="text" name="nottags" size="12" value=""/>
+            (any matches will be removed; not efficient!)
+          </tr>
+          <tr>
+            <td>Use only FOIA, where present</td>
+            <td><input type="checkbox" name="preferfoia" checked="yes"/></td>
+          </tr>
+
+
+          <tr>
+            <td>Waypoints</td>
+            <td>
+              <select name="waypoint1">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>,
+              <select name="waypoint2">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>,
+              <select name="waypoint3">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>.
+            </td>
+          </tr>
+          <tr>
+            <td/>
+            <td>
+              <select name="waypoint4">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>,
+              <select name="waypoint5">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>,
+              <select name="waypoint6">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>.
+            </td>
+          </tr>
+          <tr>
+            <td/>
+            <td>
+              <select name="waypoint7">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>,
+              <select name="waypoint8">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>,
+              <select name="waypoint9">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>.
+            </td>
+          </tr>
+          <tr>
+            <td>But EXCLUDING waypoints</td>
+            <td>
+              !<select name="notwaypoint1">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>,
+              !<select name="notwaypoint2">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>,
+              !<select name="notwaypoint3">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>.
+          </tr>
+          <tr>
+            <td/>
+            <td>
+              !<select name="notwaypoint4">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>,
+              !<select name="notwaypoint5">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>,
+              !<select name="notwaypoint6">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>.
+          </tr>
+          <tr>
+            <td/>
+            <td>
+              !<select name="notwaypoint7">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>,
+              !<select name="notwaypoint8">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>,
+              !<select name="notwaypoint9">
+                <option value="" selected="1">(waypoint)</option> 
+                {{range .Waypoints}}
+                <option value="{{.}}">{{.}}</option>{{end}}
+              </select>.
+          </tr>
+              
+          <tr><td colspan="2"><hr/></td></tr>
+          <tr><td colspan="2"><b>Time restrictions</b> - define a time range for flights.
+              Approximate. If you pick more than a few days, it may timeout.<br/>
+          </td></tr>
+
+          <tr>
+            <td>Date range</td>
+            <td>
+              {{template "widget-date-range" .}}
+            </td>
+          </tr>
+
+          <tr>
+            <td>Time of Day</td>
+            <td>
+              Start <input type="text" name="tod_start" size="7" value="" placeholder="18:00"/>,
+              length<input type="text" name="tod_len" size="7" value="" placeholder="6h"/>
+              (length can be <code>30m</code>, <code>2h45m</code>, etc.)
+            </td>
+          </tr>
+
+          <tr><td colspan="2"><hr/></td></tr>
+
+          <tr><td colspan="2">
+              <b>Geo restrictions</b>: Define a <b>{region}</b> of interest.
+              Pick a saved RestrictionSet (<a href="/fdb/restrictors/list">edit your saved
+              restrictionsets</a>), or use an ad-hoc one.<br/>
+          </td></tr>
+              
+          <tr><td>Saved sets</td><td>{{if .RestrictorSets}}
+              <select name="grs_dskey">
+                <option value="">(none selected)</option>
+                {{range .RestrictorSets}}
+                <option value="{{.DSKey}}">{{.OnelineString}}</option>{{end}}
+              </select>
+              {{else}}<i>None found</i>{{end}}
+          </td></tr>
+
+          <tr><td>Ad-hoc</td><td><br/><div class="box">
+                {{template "restrictors-gr-edit-form" .}}
+          </div></td></tr>
+          
+          <tr><td colspan="2"><hr/></td></tr>
+          <tr><td colspan="2"><b>Report-specific options</b> -
+          different reports may use some of these values; look
+          carefully at the report description for <b>{thing}</b> to
+          see which.<br/><br/>
+          </td></tr>
+<!--
+          <tr>
+            <td>Data Source [BROKEN]</td>
+            <td>
+              <input type="radio" name="datasource" value="ADSB"/>ADSB-only,
+              <input type="radio" name="datasource" value="fr24"/>fr24-only,
+              <input type="radio" name="datasource" value="any" checked="yes"/>
+              let the report choose.
+            </td>
+          </tr>
+--><input type="hidden" name="datasource" value="any"/>
+          <tr>
+            <td>Text string</td>
+            <td>
+              <b>{str}</b> <input type="text" name="textstring"
+              size="8" value=""/> (a string needed by the report)
+            </td>
+          </tr>
+
+          <tr>
+            <td>Altitude Tolerance</td>
+            <td>
+              <b>{tol}</b> <input type="text" name="altitudetolerance"
+              size="4" value="300"/> feet (or degrees)
+            </td>
+          </tr>
+
+          <tr>
+            <td>Distance</td>
+            <td>
+              <b>{dist}</b> <input type="text" name="refdistancekm"
+              size="8" value=""/> (in KM)
+            </td>
+          </tr>
+
+          <tr>
+            <td>Reference Point</td>
+            <td>
+              <b>{refpoint}</b>{{template "widget-waypoint-or-pos" nlldict "refpt" . }}
+            </td>
+          </tr>
+          <tr>
+            <td>Reference Point 2</td>
+            <td>
+              <b>{refpoint2}</b>{{template "widget-waypoint-or-pos" nlldict "refpt2" . }}
+            </td>
+          </tr>
+
+          <tr>
+            <td>Duration</td>
+            <td>
+              <b>{duration}</b>
+              <input type="text" name="duration" size="8" value="2m"/>
+              (e.g. <code>30s</code>, <code>2h25m15s</code>)
+            </td>
+          </tr>
+          
+          
+          <tr><td colspan="2"><hr/></td></tr>
+          <tr><td colspan="2"><b>Formatting / output options</b> - how
+          to display the output.<br/><br/>
+          </td></tr>
+
+          <tr>
+            <td>Result format</td>
+            <td>
+              <input type="radio" name="resultformat" value="list" checked="yes"/>web page,
+              <input type="radio" name="resultformat" value="csv"/>download CSV<!--,
+              <input type="radio" name="resultformat" value="gcs"/>Cloud Storage-->.
+            </td>
+          </tr>
+          
+          <tr><td colspan="2"><hr/></td></tr>
+        </table>
+
+        <br/>
+        <p style="text-align:center"><input class="button" type="submit" value="GENERATE"/></p>
+        <br/>
+        </div>
+        {{if .LogLevel}}
+        <input type="hidden" name="log" value="{{.LogLevel}}"/>
+        <p>Logging at level <code>{{.LogLevel}}</code>.</p>
+        {{end}}
+        <!--
+        <p> Debug: <input type="text" name="debug" value="" size="1"/></p>
+-->
+        <p>Instructions: <a href="https://goo.gl/2MVVSU">https://goo.gl/2MVVSU</a></p>
+        
+      </div>
+    </form>
+  </body>
+</html>
+
+{{end}}

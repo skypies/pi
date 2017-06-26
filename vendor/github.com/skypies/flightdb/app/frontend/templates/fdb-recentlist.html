@@ -1,0 +1,33 @@
+{{define "fdb-recentlist"}}
+
+<html>
+  {{template "header"}}
+  <body>
+    <div class="allstack">
+      <h1>Recent ({{len .Flights}}) {{.Tags}}</h1>
+      <div class="box">
+        <table>
+        {{range .Flights}}
+        <tr>
+          <td>
+            [<a target="_blank" href="{{.TrackUrl}}">map</a>]
+            <code>{{.IdentityString}}</code>
+          </td><td>
+            {{.TagList}}
+          </td><td>
+            {{.WaypointList}}
+          </td><td>
+            {{.AnyTrack.ShortString}}
+          </td>
+        </tr>
+        {{end}}
+        </table>
+      </div>
+      <div class="stack">
+        <h3>Notes</h3>
+      </div>
+    </div>
+  </body>
+</html>
+
+{{end}}
