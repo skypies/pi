@@ -269,7 +269,7 @@ func pushAirspaceToMemcache(ctx context.Context, as *airspace.Airspace) {
 // }}}
 // {{{ pubsubMsgCallback
 
-func newPubsubMsgCallback(as *airspace.Airspace, msgsOut chan<- []*adsb.CompositeMsg) func(context.Context, *pubsub.Message) {
+func newPubsubMsgCallback(msgsOut chan<- []*adsb.CompositeMsg) func(context.Context, *pubsub.Message) {
 
 	// All objects/routines used in here need to be safe for concurrent access
 	return func(ctx context.Context, m *pubsub.Message) {
@@ -283,7 +283,6 @@ func newPubsubMsgCallback(as *airspace.Airspace, msgsOut chan<- []*adsb.Composit
 		msgsOut <- msgs
 
 		// Update our vital stats, with info about this bundle
-		//airspaceBytes,_ := as.ToBytes()
 		vitalsRequestChan<- VitalsRequest{
 			Name: "_bundle",
 			Str:msgs[0].ReceiverName,
@@ -453,7 +452,10 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 
 	pc := mypubsub.NewClient(cancelCtx, fProjectName)
 	sub := pc.Subscription(fPubsubSubscription)
-	callback := newPubsubMsgCallback(&as, msgsOut)
+
+	// sub.Receive invokes concurrent instances of this callback; we funnel their
+	// (unpacked) responses back into a channel, for the processing pipeline to eat
+	callback := newPubsubMsgCallback(msgsOut)
 
 	// Kick off a goroutine to hold Receiuve, which doesn't terminate
 	go func() {
@@ -514,13 +516,15 @@ func filterNewMessages(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*ads
 			if newMsgs := as.MaybeUpdate(msgs); len(newMsgs) > 0 {
 				// Pass them to the other goroutine for dissemination, and get back to business.
 				msgsOut <- newMsgs
+				Log.Printf("- %2d were new (%2d already seen) - %s",
+					len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
 
 				if fOnAppEngine {
 					// Memcache no longer available on appengine flex (!)
 					// pushAirspaceToMemcache(ctx, as)
 				} else {
-					Log.Printf("- %2d were new (%2d already seen) - %s",
-						len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
+					//Log.Printf("- %2d were new (%2d already seen) - %s",
+					//	len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
 				}
 			}
 		}
