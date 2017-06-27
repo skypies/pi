@@ -31,7 +31,6 @@ import (
 	"os/signal"
 	"runtime"
 	"sort"
-	"sync"
 	"time"
 
 	"cloud.google.com/go/pubsub"
@@ -217,7 +216,7 @@ func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
 	frag := fdb.MessagesToTrackFragment(msgs)
 
 	if err := db.AddTrackFragment(frag); err != nil {
-		Log.Printf("flushPost/ToDatastore: %v\n", err)
+		Log.Printf("flushPost/ToDatastore: %v\n--\n", err)
 	}
 
 	vitalsRequestChan<- VitalsRequest{
@@ -231,12 +230,19 @@ func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
 // {{{ pushAirspaceToMemcache
 
 var tLastMemcache = time.Now()
-var memcacheMutex = sync.Mutex{}
+
+/* TBD, when appengine flex gets a memcache API ...
+
+func saveSingletonToMemcache(ctx context.Context, name string, data []byte) error {
+	if len(data) > 950000 {
+		return fmt.Errorf("singleton too large (name=%s, size=%d)", name, len(data))
+	}
+	item := &memcache.Item{Key:singletonMCKey(name), Value:data}
+	return memcache.Set(ctx, item)
+}
+*/
 
 func pushAirspaceToMemcache(ctx context.Context, as *airspace.Airspace) {
-	memcacheMutex.Lock()
-	defer memcacheMutex.Unlock()
-
 	if time.Since(tLastMemcache) < 500 * time.Millisecond { return }
 
 	// Take from airspace/memcache:JustAircraftToMemcache, and goroutinzed
@@ -246,6 +252,7 @@ func pushAirspaceToMemcache(ctx context.Context, as *airspace.Airspace) {
 			tStart := time.Now()
 
 			if err := gaeutil.SaveSingletonToMemcache(ctx, "airspace", b); err != nil {
+			//if err := saveSingletonToMemcache(ctx, "airspace", b); err != nil {
 				Log.Printf("main/JustAircraftToMemcache: err: %v", err)
 			} else {
 				vitalsRequestChan<- VitalsRequest{
@@ -273,21 +280,7 @@ func newPubsubMsgCallback(as *airspace.Airspace, msgsOut chan<- []*adsb.Composit
 		if err != nil {
 			Log.Printf("[%d] Unpack: err: %v", err)
 		}
-
-		newMsgs := as.MaybeUpdate(msgs)
-		
-		if len(newMsgs) > 0 {
-			// Pass them to the other goroutine for dissemination, and get back to business.
-			msgsOut <- newMsgs
-			//tMsgsSent = time.Now()
-
-			if fOnAppEngine {
-				pushAirspaceToMemcache(ctx, as)
-			} else {
-				//Log.Printf("- %2d were new (%2d already seen) - %s",
-				//	len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
-			}
-		}
+		msgsOut <- msgs
 
 		// Update our vital stats, with info about this bundle
 		//airspaceBytes,_ := as.ToBytes()
@@ -295,7 +288,7 @@ func newPubsubMsgCallback(as *airspace.Airspace, msgsOut chan<- []*adsb.Composit
 			Name: "_bundle",
 			Str:msgs[0].ReceiverName,
 			I:int64(len(msgs)),
-			J:int64(len(newMsgs)),
+			J:0, //int64(len(newMsgs)), // TODO(abw): repair this
 			K:0,
 			
 			// Some primitive wait state data (latencies in millis)
@@ -305,7 +298,6 @@ func newPubsubMsgCallback(as *airspace.Airspace, msgsOut chan<- []*adsb.Composit
 			
 			T: msgs[len(msgs)-1].GeneratedTimestampUTC,
 		}
-		//tPrevEnd = time.Now()
 	}
 }
 
@@ -448,7 +440,7 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 	as := airspace.Airspace{}
 
 	setupPubsub()
-	Log.Printf("(pubsub setup done)\n")
+	Log.Printf("(pullNewFromPubsub starting)\n")
 	
 	if fOnAppEngine {
 		if err := as.EverythingFromMemcache(ctx); err != nil {
@@ -463,7 +455,9 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 	sub := pc.Subscription(fPubsubSubscription)
 	callback := newPubsubMsgCallback(&as, msgsOut)
 
+	// Kick off a goroutine to hold Receiuve, which doesn't terminate
 	go func() {
+		Log.Printf("(receiver starting)\n")
 		if err := sub.Receive(cancelCtx, callback); err != nil {
 			Log.Printf("sub.Receive() err:%v", err)
 			return
@@ -491,6 +485,50 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 	
 	Log.Printf(" -- pullNewFromPubsub clean exit\n")
 }
+
+// }}}
+// {{{ filterNewMessages
+
+// pubsub.Receiver's goroutines will send to the msgIns channel; we dedupe and send on
+// This goroutine owns the airspace object (which is not concurrent safe)
+func filterNewMessages(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*adsb.CompositeMsg) {
+	ctx := getContext()
+	as := airspace.Airspace{}
+	
+	if fOnAppEngine {
+		if err := as.EverythingFromMemcache(ctx); err != nil {
+			Log.Printf("airspace.EverythingFromMemcache: %v", err)
+			as = airspace.Airspace{}
+		}
+	}
+
+	for {
+		if weAreDone() { break } // Clean exit
+
+		select {
+		case <-time.After(time.Second):
+			// break, in case weAreDone
+
+		case msgs := <-msgsIn:
+			if newMsgs := as.MaybeUpdate(msgs); len(newMsgs) > 0 {
+				// Pass them to the other goroutine for dissemination, and get back to business.
+				msgsOut <- newMsgs
+
+				if fOnAppEngine {
+					// Memcache no longer available on appengine flex (!)
+					// pushAirspaceToMemcache(ctx, as)
+				} else {
+					Log.Printf("- %2d were new (%2d already seen) - %s",
+						len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
+				}
+			}
+		}
+	}
+	
+	Log.Printf(" -- filterNewMessages clean exit\n")
+}
+
+// }}}
 
 // }}}
 // {{{ bufferTracks
@@ -571,6 +609,7 @@ func main() {
 	
 	msgChan1 := make(chan []*adsb.CompositeMsg, 3)
 	msgChan2 := make(chan []*adsb.CompositeMsg, 3)
+	msgChan3 := make(chan []*adsb.CompositeMsg, 3)
 	workerChans := []chan []*adsb.CompositeMsg{}
 
 	nWorkers := 256 // avoid getting backed up on DB writes
@@ -582,8 +621,9 @@ func main() {
 	}
 
 	go pullNewFromPubsub(msgChan1)           // sends mixed bundles down chan1
-	go bufferTracks(msgChan1, msgChan2)      // ... sorts msgs into per-flight frags, into chan2 ...
-	go workerDispatch(msgChan2, workerChans) // ... takes a per-flight frag, shards over workerChans
+	go filterNewMessages(msgChan1, msgChan2) // ... dedupes them, into chan2 ...
+	go bufferTracks(msgChan2, msgChan3)      // ... sorts msgs into per-flight frags, into chan3 ...
+	go workerDispatch(msgChan3, workerChans) // ... takes a per-flight frag, shards over workerChans
 
 	// Manage vital statistics in a thread safe way
 	go trackVitals()
@@ -761,6 +801,38 @@ func pullPubsubUntilWedge(ctx context.Context, as *airspace.Airspace, id int, iW
 
 	Log.Printf(" -- pullPubsubUntilWedge %d clean exit", id)
 	return
+}
+
+// }}}
+// {{{ pushAirspaceToMemcache
+
+var tLastMemcache = time.Now()
+var memcacheMutex = sync.Mutex{}
+
+func pushAirspaceToMemcache(ctx context.Context, as *airspace.Airspace) {
+	memcacheMutex.Lock()
+	defer memcacheMutex.Unlock()
+
+	if time.Since(tLastMemcache) < 500 * time.Millisecond { return }
+
+	// Take from airspace/memcache:JustAircraftToMemcache, and goroutinzed
+	justAircraft := airspace.Airspace{Aircraft: as.Aircraft}
+	if b,err := justAircraft.ToBytes(); err == nil {
+		go func(){
+			tStart := time.Now()
+
+			if err := gaeutil.SaveSingletonToMemcache(ctx, "airspace", b); err != nil {
+				Log.Printf("main/JustAircraftToMemcache: err: %v", err)
+			} else {
+				vitalsRequestChan<- VitalsRequest{
+					Name: "_memcache",
+					I:(time.Since(tStart).Nanoseconds() / 1000000),
+				}
+			}
+		}()
+	}
+	
+	tLastMemcache = time.Now()
 }
 
 // }}}
