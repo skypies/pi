@@ -363,9 +363,9 @@ func trackVitals() {
 				counters["nNew"] += req.J
 				counters["nDupes"] += (req.I - req.J)
 				m.RecordValue("BundleSize", req.I)
-				m.RecordValue("PullMillis", req.L)
-				m.RecordValue("ToQueueMillis", req.M)
-				m.RecordValue("PreludeMillis", req.N)
+				//m.RecordValue("PullMillis", req.L)
+				//m.RecordValue("ToQueueMillis", req.M)
+				//m.RecordValue("PreludeMillis", req.N)
 
 			} else if req.Name == "_dbwrite" {
 				m.RecordValue("DBWriteMillis", req.I)
@@ -457,7 +457,7 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 
 	// Kick off a goroutine to hold Receiuve, which doesn't terminate
 	go func() {
-		Log.Printf("(receiver starting)\n")
+		Log.Printf("(sub.Receive starting)\n")
 		if err := sub.Receive(cancelCtx, callback); err != nil {
 			Log.Printf("sub.Receive() err:%v", err)
 			return
@@ -480,7 +480,8 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 		pc := mypubsub.NewClient(ctx, fProjectName)
 		if err := mypubsub.DeleteSub(ctx, pc, fPubsubSubscription); err != nil {
 			Log.Printf(" -- pullNewFromPubsub clean exit; del '%s': %v", fPubsubSubscription, err)
-		}			
+		}
+		Log.Printf("  - pullNewFromPubsub, deleted %q\n", fPubsubSubscription)
 	}
 	
 	Log.Printf(" -- pullNewFromPubsub clean exit\n")
@@ -527,8 +528,6 @@ func filterNewMessages(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*ads
 	
 	Log.Printf(" -- filterNewMessages clean exit\n")
 }
-
-// }}}
 
 // }}}
 // {{{ bufferTracks
@@ -605,7 +604,7 @@ func flushTracks(myId int, msgsIn <-chan []*adsb.CompositeMsg) {
 // {{{ main
 
 func main() {
-	Log.Printf("(main)\n")
+	Log.Printf("(main, running under %q)\n", appengine.ServerSoftware())
 	
 	msgChan1 := make(chan []*adsb.CompositeMsg, 3)
 	msgChan2 := make(chan []*adsb.CompositeMsg, 3)
