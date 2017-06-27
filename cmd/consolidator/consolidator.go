@@ -45,6 +45,7 @@ import (
 	fdb "github.com/skypies/flightdb"
 	"github.com/skypies/flightdb/fgae"
 	"github.com/skypies/pi/airspace"
+	"github.com/skypies/util/dsprovider"
 	"github.com/skypies/util/gaeutil"
 	"github.com/skypies/util/histogram"
 	"github.com/skypies/util/metrics"
@@ -211,6 +212,8 @@ func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
 	tStart := time.Now()
 
 	db := fgae.NewDB(getContext())
+	db.Backend = dsprovider.CloudDSProvider{fProjectName}
+
 	frag := fdb.MessagesToTrackFragment(msgs)
 
 	if err := db.AddTrackFragment(frag); err != nil {
