@@ -208,7 +208,7 @@ func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
 		return
 	}
 
-	tStart := time.Now()
+	//tStart := time.Now()
 
 	db := fgae.NewDB(getContext())
 	db.Backend = dsprovider.CloudDSProvider{fProjectName}
