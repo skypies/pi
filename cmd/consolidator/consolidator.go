@@ -217,13 +217,17 @@ func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
 
 	if err := db.AddTrackFragment(frag); err != nil {
 		Log.Printf("flushPost/ToDatastore: %v\n--\n", err)
+	} else {
+		Log.Printf("DB write OK\n")
 	}
 
+/*
 	vitalsRequestChan<- VitalsRequest{
 		Name: "_dbwrite",
 		I:(time.Since(tStart).Nanoseconds() / 1000000),
 		J:int64(myId),
 	}
+*/
 }
 
 // }}}
@@ -273,15 +277,13 @@ func newPubsubMsgCallback(msgsOut chan<- []*adsb.CompositeMsg) func(context.Cont
 
 	// All objects/routines used in here need to be safe for concurrent access
 	return func(ctx context.Context, m *pubsub.Message) {
-		//tStart := time.Now()
-		//tMsgsSent := tStart
-		
 		msgs,err := mypubsub.UnpackPubsubMessage(m)
 		if err != nil {
 			Log.Printf("[%d] Unpack: err: %v", err)
+			return
 		}
 		msgsOut <- msgs
-
+/*
 		// Update our vital stats, with info about this bundle
 		vitalsRequestChan<- VitalsRequest{
 			Name: "_bundle",
@@ -297,6 +299,7 @@ func newPubsubMsgCallback(msgsOut chan<- []*adsb.CompositeMsg) func(context.Cont
 			
 			T: msgs[len(msgs)-1].GeneratedTimestampUTC,
 		}
+*/
 	}
 }
 
