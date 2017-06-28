@@ -211,7 +211,7 @@ func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
 	//tStart := time.Now()
 
 	db := fgae.NewDB(getContext())
-	db.Backend = dsprovider.CloudDSProvider{fProjectName}
+	db.Backend = dsprovider.CloudDSProvider{fProjectName,nil}
 
 	frag := fdb.MessagesToTrackFragment(msgs)
 
