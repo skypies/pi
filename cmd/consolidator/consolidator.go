@@ -510,14 +510,15 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 // This goroutine owns the airspace object (which is not concurrent safe)
 func filterNewMessages(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*adsb.CompositeMsg) {
 	ctx := getContext()
-	as := airspace.Airspace{}
+	as := airspace.NewAirspace()
+	as.RollAfter := 10 * time.Second // very aggressive, while we have probs
 	
-	if fOnAppEngine {
+/*	if fOnAppEngine {
 		if err := as.EverythingFromMemcache(ctx); err != nil {
 			Log.Printf("airspace.EverythingFromMemcache: %v", err)
 			as = airspace.Airspace{}
 		}
-	}
+	} */
 
 	for {
 		if weAreDone() { break } // Clean exit
