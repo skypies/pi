@@ -3,11 +3,11 @@
 // different topic. A snapshot is written to memcache, for other apps to access.
 
 // It should be deployed as an AppEngine Flexible App, as per the app.yaml file:
-//   $ gcloud app deploy ./app.yaml --bucket gs://gcloud-arse
+//   $ gcloud app deploy
 //   https://cloud.google.com/appengine/docs/flexible/go/testing-and-deploying-your-app
 
 // If data is written to datastore, you may need to deploy some datastore indices, too:
-//   $ gcloud app deploy ./index.yaml --promote --bucket gs://gcloud-arse
+//   $ gcloud app deploy ./index.yaml --promote
 
 // When running in the cloud, these oneliners might be handy:
 //   $ gcloud app logs read -s consolidator
@@ -226,8 +226,8 @@ func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
 
 	if err := db.AddTrackFragment(frag); err != nil {
 		Log.Printf("flushPost/ToDatastore: %v\n--\n", err)
-	} else {
-		Log.Printf("DB write OK\n")
+//	} else {
+//		Log.Printf("DB write OK\n")
 	}
 
 	vitalsRequestChan<- VitalsRequest{
@@ -341,10 +341,63 @@ func trackVitals() {
 	counters := map[string]int64{}
 	receivers := map[string]ReceiverSummary{}
 	m := metrics.NewMetrics()
+
+	// {{{ vitals2str()
+
+	vitals2str := func() string {
+		rcvrs := ""
+		keys := []string{}
+		for k,_ := range receivers { keys = append(keys,k) }
+		sort.Strings(keys)
+		for _,k := range keys {
+			v := receivers[k]
+			rcvrs += fmt.Sprintf(
+				"    %-15.15s: %9d msgs, %8d bundles, last %.1f s\n",
+				k, v.NumMessagesSent, v.NumBundlesSent, time.Since(v.LastBundleTime).Seconds())
+		}
+
+		workerHist := histogram.Histogram{NumBuckets:40, ValMin:0, ValMax:400}
+		// Measure if each worker did more (or less) of its fair share (where fair is 100)
+		expectedFraction := 1 / float64(len(workers))
+		tot := 0
+		for _,count := range workers {
+			tot += int(count)
+		}
+		for _,count := range workers {
+			actualFraction := float64(count) / float64(tot)
+			shareOfLoad := actualFraction / expectedFraction
+			workerHist.Add(histogram.ScalarVal(shareOfLoad * 100))
+		}
+
+		str := fmt.Sprintf(
+			"* %d messages (%d dupes; %d total; %d bundles; %d writes)\n"+
+				"* Uptime: %s (started %s; last bundle:%5.3fs)\n"+
+				"\n"+
+				"* Receivers:-\n%s\n"+
+				"* Workers: %s\n\n"+
+				"* Metrics:-\n%s\n",
+			counters["nNew"], counters["nDupes"], counters["nAll"], counters["nBundles"], counters["nFrags"],
+			time.Second * time.Duration(int(time.Since(startupTime).Seconds())), startupTime,
+			time.Since(lastBundleTime).Seconds(),
+			rcvrs,
+			workerHist,
+			m.String())
+
+		return str
+	}
+
+	// }}}
+
+	tLastDump := time.Now()
 	
 	for {
 		if weAreDone() { break }
 
+		if time.Since(tLastDump) > time.Minute {
+			Log.Printf("vital dump:-\n%s", vitals2str())
+			tLastDump = time.Now()
+		}
+		
 		select {
 		case <-time.After(time.Second):
 			// break
@@ -381,49 +434,7 @@ func trackVitals() {
 				vitalsResponseChan<- VitalsResponse{T: lastBundleTime}
 
 			} else if req.Name == "_output" {
-				// {{{ fmt
-
-				rcvrs := ""
-				keys := []string{}
-				for k,_ := range receivers { keys = append(keys,k) }
-				sort.Strings(keys)
-				for _,k := range keys {
-					v := receivers[k]
-					rcvrs += fmt.Sprintf(
-						"    %-15.15s: %9d msgs, %8d bundles, last %.1f s\n",
-						k, v.NumMessagesSent, v.NumBundlesSent, time.Since(v.LastBundleTime).Seconds())
-				}
-
-				workerHist := histogram.Histogram{NumBuckets:40, ValMin:0, ValMax:400}
-				// Measure if each worker did more (or less) of its fair share (where fair is 100)
-				expectedFraction := 1 / float64(len(workers))
-				tot := 0
-				for _,count := range workers {
-					tot += int(count)
-				}
-				for _,count := range workers {
-					actualFraction := float64(count) / float64(tot)
-					shareOfLoad := actualFraction / expectedFraction
-					workerHist.Add(histogram.ScalarVal(shareOfLoad * 100))
-				}
-
-				str := fmt.Sprintf(
-						"* %d messages (%d dupes; %d total; %d bundles; %d writes)\n"+
-						"* Uptime: %s (started %s; last bundle:%5.3fs)\n"+
-						"\n"+
-						"* Receivers:-\n%s\n"+
-						"* Workers: %s\n\n"+
-						"* Metrics:-\n%s\n",
-					counters["nNew"], counters["nDupes"], counters["nAll"], counters["nBundles"], counters["nFrags"],
-					time.Second * time.Duration(int(time.Since(startupTime).Seconds())), startupTime,
-					time.Since(lastBundleTime).Seconds(),
-					rcvrs,
-					workerHist,
-					m.String())
-
-				// }}}
-
-				vitalsResponseChan<- VitalsResponse{Str: str}
+				vitalsResponseChan<- VitalsResponse{Str: vitals2str()}
 
 			} else if req.Name != "" {
 				if req.Str != "" { strings[req.Name] = req.Str }
@@ -519,8 +530,8 @@ func filterNewMessages(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*ads
 			if newMsgs := as.MaybeUpdate(msgs); len(newMsgs) > 0 {
 				// Pass them to the other goroutine for dissemination, and get back to business.
 				msgsOut <- newMsgs
-				Log.Printf("- %2d were new (%2d already seen) - %s",
-					len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
+				//Log.Printf("- %2d were new (%2d already seen) - %s",
+				//	len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
 
 				if fOnAppEngine {
 					// Memcache no longer available on appengine flex (!)
