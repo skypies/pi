@@ -2,12 +2,12 @@
 // composite ADSB messages from it. These are deduped, and unique ones are published to a
 // different topic. A snapshot is written to memcache, for other apps to access.
 
-// It should be deployed as a Flexible Environment (VM) AppEngine App, as per the app.yaml file:
-//   $ aedeploy gcloud app deploy ./app.yaml --bucket gs://gcloud-arse
+// It should be deployed as an AppEngine Flexible App, as per the app.yaml file:
+//   $ gcloud app deploy ./app.yaml --bucket gs://gcloud-arse
 //   https://cloud.google.com/appengine/docs/flexible/go/testing-and-deploying-your-app
 
 // If data is written to datastore, you may need to deploy some datastore indices, too:
-//   $ aedeploy gcloud app deploy ./index.yaml --promote --bucket gs://gcloud-arse
+//   $ gcloud app deploy ./index.yaml --promote --bucket gs://gcloud-arse
 
 // When running in the cloud, these oneliners might be handy:
 //   $ gcloud app logs read -s consolidator
@@ -37,7 +37,8 @@ import (
 	
 	"golang.org/x/net/context"
 
-	"google.golang.org/appengine"
+	// Deprecated: https://cloud.google.com/appengine/docs/flexible/go/upgrading
+	//"google.golang.org/appengine"
 
 	"github.com/skypies/adsb"
 	"github.com/skypies/adsb/trackbuffer"
@@ -88,8 +89,10 @@ func init() {
 	http.HandleFunc("/con/stack", stackTraceHandler)
 	http.HandleFunc("/con/reset", resetHandler)
 
+	// https://github.com/GoogleCloudPlatform/golang-samples
 	http.HandleFunc("/_ah/start", startHandler)
 	http.HandleFunc("/_ah/stop", stopHandler)
+	http.HandleFunc("/_ah/health", healthCheckHandler)
 
 	tGlobalStart = time.Now()
 
@@ -115,7 +118,7 @@ func setupPubsub() {
 
 // }}}
 
-// {{{ {start,stop,status,reset,stackTrace}Handler
+// {{{ {start,stop,healthCheck,status,reset,stackTrace}Handler
 
 func startHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("(startHandler)\n")
@@ -138,6 +141,10 @@ func stopHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	w.Write([]byte("OK"))	
+}
+
+func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
+        fmt.Fprint(w, "ok")
 }
 
 func statusHandler(w http.ResponseWriter, r *http.Request) {
@@ -192,10 +199,12 @@ func addSIGINTHandler() {
 // the appengine context; but in that case any old context will do.
 
 func getContext() context.Context {
+	return context.Background()
+/*
 	if fOnAppEngine {
 		return appengine.BackgroundContext()
 	}
-	return context.TODO()
+	return context.TODO()*/
 }
 
 // }}}
@@ -208,7 +217,7 @@ func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
 		return
 	}
 
-	//tStart := time.Now()
+	tStart := time.Now()
 
 	db := fgae.NewDB(getContext())
 	db.Backend = dsprovider.CloudDSProvider{fProjectName,nil}
@@ -221,13 +230,11 @@ func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
 		Log.Printf("DB write OK\n")
 	}
 
-/*
 	vitalsRequestChan<- VitalsRequest{
 		Name: "_dbwrite",
 		I:(time.Since(tStart).Nanoseconds() / 1000000),
 		J:int64(myId),
 	}
-*/
 }
 
 // }}}
@@ -280,26 +287,22 @@ func newPubsubMsgCallback(msgsOut chan<- []*adsb.CompositeMsg) func(context.Cont
 		msgs,err := mypubsub.UnpackPubsubMessage(m)
 		if err != nil {
 			Log.Printf("[%d] Unpack: err: %v", err)
+			m.Nack()
 			return
 		}
+		m.Ack()
 		msgsOut <- msgs
-/*
+
 		// Update our vital stats, with info about this bundle
 		vitalsRequestChan<- VitalsRequest{
 			Name: "_bundle",
 			Str:msgs[0].ReceiverName,
 			I:int64(len(msgs)),
-			J:0, //int64(len(newMsgs)), // TODO(abw): repair this
+			J:int64(len(msgs)), //int64(len(newMsgs)), // TODO(abw): repair this
 			K:0,
-			
-			// Some primitive wait state data (latencies in millis)
-			L:0, //(tPullDone.Sub(tStart).Nanoseconds() / 1000000),
-			M:0, //(tMsgsSent.Sub(tPullDone).Nanoseconds() / 1000000),
-			N:0, //(tStart.Sub(tPrevEnd).Nanoseconds() / 1000000),  // prelude/zombie time
-			
+						
 			T: msgs[len(msgs)-1].GeneratedTimestampUTC,
 		}
-*/
 	}
 }
 
@@ -365,9 +368,6 @@ func trackVitals() {
 				counters["nNew"] += req.J
 				counters["nDupes"] += (req.I - req.J)
 				m.RecordValue("BundleSize", req.I)
-				//m.RecordValue("PullMillis", req.L)
-				//m.RecordValue("ToQueueMillis", req.M)
-				//m.RecordValue("PreludeMillis", req.N)
 
 			} else if req.Name == "_dbwrite" {
 				m.RecordValue("DBWriteMillis", req.I)
@@ -611,7 +611,7 @@ func flushTracks(myId int, msgsIn <-chan []*adsb.CompositeMsg) {
 // {{{ main
 
 func main() {
-	Log.Printf("(main, running under %q)\n", appengine.ServerSoftware())
+	Log.Printf("(main starting)\n")
 	
 	msgChan1 := make(chan []*adsb.CompositeMsg, 3)
 	msgChan2 := make(chan []*adsb.CompositeMsg, 3)
@@ -634,17 +634,12 @@ func main() {
 	// Manage vital statistics in a thread safe way
 	go trackVitals()
 	
-	// Now do basically nothing in the main goroutine
-	if fOnAppEngine {
-		appengine.Main()		
-	} else {
-		go func(){ Log.Fatalf("locallisten: %v\n", http.ListenAndServe(":8081", nil)) }()
+	go func(){ Log.Fatal(http.ListenAndServe(":8080", nil)) }()
 
-		// Block until done channel lights up
-		<-done
-		time.Sleep(time.Second * 4)  // Give the pubsub loop a chance to unblock and exit
-		Log.Printf("(-- main clean exit)\n")
-	}
+	// Block until done channel lights up
+	<-done
+	time.Sleep(time.Second * 4)  // Give the pubsub loop a chance to unblock and exit
+	Log.Printf("(-- main clean exit)\n")
 }
 
 // }}}
