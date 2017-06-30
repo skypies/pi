@@ -509,11 +509,11 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 // pubsub.Receiver's goroutines will send to the msgIns channel; we dedupe and send on
 // This goroutine owns the airspace object (which is not concurrent safe)
 func filterNewMessages(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*adsb.CompositeMsg) {
-	ctx := getContext()
 	as := airspace.NewAirspace()
-	as.RollAfter := 10 * time.Second // very aggressive, while we have probs
+	as.Signatures.RollAfter = 10 * time.Second // very aggressive, while we have probs
 	
-/*	if fOnAppEngine {
+/*	ctx := getContext()
+	if fOnAppEngine {
 		if err := as.EverythingFromMemcache(ctx); err != nil {
 			Log.Printf("airspace.EverythingFromMemcache: %v", err)
 			as = airspace.Airspace{}
