@@ -28,9 +28,14 @@ type Signatures struct {
 	CurrMsgs         map[adsb.Signature]bool
 	PrevMsgs         map[adsb.Signature]bool
 	RollAfter        time.Duration
+	RollWhenThisMany int
 	TimeOfLastRoll   time.Time
 }
-	
+func (s Signatures)TooManySignatures() bool {
+	return s.RollWhenThisMany > 0 && len(s.CurrMsgs) >= s.RollWhenThisMany
+}
+
+
 type Airspace struct {
 	Signatures `json:"-"`                  // What we've seen "recently"; for deduping
 	Aircraft map[adsb.IcaoId]AircraftData  // "what is in the sky right now"; for realtime serving
@@ -129,13 +134,15 @@ func (a Airspace)Youngest() time.Duration {
 
 // {{{ a.MaybeUpdate
 
-// If any messages are new, update our view of the world. Return the indicies of the messages
+// If any messages are new, update our view of the world. Return the indices of the messages
 // we thought were new.
 func (a *Airspace) MaybeUpdate(msgs []*adsb.CompositeMsg) []*adsb.CompositeMsg {
 	ret := []*adsb.CompositeMsg{}
 
 	// Time to roll (or lazily init) ?
-	if time.Since(a.TimeOfLastRoll) > a.RollAfter { a.rollMsgs() }
+	if time.Since(a.TimeOfLastRoll) > a.RollAfter || a.TooManySignatures() {
+		a.rollMsgs()
+	}
 
 	for _,msg := range msgs {
 		if a.thisIsNewContent(msg) {

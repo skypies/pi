@@ -467,8 +467,10 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 
 	pc := mypubsub.NewClient(cancelCtx, fProjectName)
 	sub := pc.Subscription(fPubsubSubscription)
-	sub.ReceiveSettings.MaxOutstandingMessages = 10 // put a limit on how many we juggle
 
+	sub.ReceiveSettings.MaxOutstandingMessages = 10 // put a limit on how many we juggle
+	as.RollWhenThisMany = 5000                      // Dedupe set consists of 1-2x this number
+	
 	// sub.Receive invokes concurrent instances of this callback; we funnel their
 	// (unpacked) responses back into a channel, for the processing pipeline to eat
 	callback := newPubsubMsgCallback(msgsOut)
