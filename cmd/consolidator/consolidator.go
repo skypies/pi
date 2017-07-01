@@ -284,13 +284,14 @@ func newPubsubMsgCallback(msgsOut chan<- []*adsb.CompositeMsg) func(context.Cont
 
 	// All objects/routines used in here need to be safe for concurrent access
 	return func(ctx context.Context, m *pubsub.Message) {
+		m.Ack()
+
 		msgs,err := mypubsub.UnpackPubsubMessage(m)
 		if err != nil {
 			Log.Printf("[%d] Unpack: err: %v", err)
-			m.Nack()
 			return
 		}
-		m.Ack()
+
 		msgsOut <- msgs
 
 		// Update our vital stats, with info about this bundle
@@ -466,12 +467,13 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 
 	pc := mypubsub.NewClient(cancelCtx, fProjectName)
 	sub := pc.Subscription(fPubsubSubscription)
+	sub.ReceiveSettings.MaxOutstandingMessages = 10 // put a limit on how many we juggle
 
 	// sub.Receive invokes concurrent instances of this callback; we funnel their
 	// (unpacked) responses back into a channel, for the processing pipeline to eat
 	callback := newPubsubMsgCallback(msgsOut)
 
-	// Kick off a goroutine to hold Receiuve, which doesn't terminate
+	// sub.Receive doesn't terminate, so spin off into a goroutine
 	go func() {
 		Log.Printf("(sub.Receive starting)\n")
 		if err := sub.Receive(cancelCtx, callback); err != nil {
