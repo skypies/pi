@@ -373,13 +373,16 @@ func trackVitals() {
 		str := fmt.Sprintf(
 			"* %d messages (%d dupes; %d total; %d bundles; %d writes)\n"+
 				"* Uptime: %s (started %s; last bundle:%5.3fs)\n"+
+				"* Trackbuffer: %d elems, Airspace: (%d,%d) elems\n"+
 				"\n"+
 				"* Receivers:-\n%s\n"+
 				"* Workers: %s\n\n"+
 				"* Metrics:-\n%s\n",
-			counters["nNew"], counters["nDupes"], counters["nAll"], counters["nBundles"], counters["nFrags"],
+			(counters["nAll"] - counters["nDupes"]), counters["nDupes"], counters["nAll"],
+			counters["nBundles"], counters["nFrags"],
 			time.Second * time.Duration(int(time.Since(startupTime).Seconds())), startupTime,
 			time.Since(lastBundleTime).Seconds(),
+			counters["TrackbufferSize"], counters["AirspaceSigCount"], counters["AirspaceAircraftCount"],
 			rcvrs,
 			workerHist,
 			m.String())
@@ -390,6 +393,7 @@ func trackVitals() {
 	// }}}
 
 	tLastDump := time.Now()
+	tLastCounts := time.Now()
 	
 	for {
 		if weAreDone() { break }
@@ -398,7 +402,13 @@ func trackVitals() {
 			Log.Printf("vital dump:-\n%s", vitals2str())
 			tLastDump = time.Now()
 		}
-		
+		if time.Since(tLastCounts) > time.Second {
+			Log.Printf("* Trackbuffer: %d elems, Airspace: (%d,%d) elems\n",
+				counters["TrackbufferSize"], counters["AirspaceSigCount"],
+				counters["AirspaceAircraftCount"])
+			tLastCounts = time.Now()
+		}
+
 		select {
 		case <-time.After(time.Second):
 			// break
@@ -419,8 +429,7 @@ func trackVitals() {
 				receivers[req.Str] = s
 				counters["nBundles"] += 1
 				counters["nAll"] += req.I
-				counters["nNew"] += req.J
-				counters["nDupes"] += (req.I - req.J)
+				//counters["nNew"] += req.J
 				m.RecordValue("BundleSize", req.I)
 
 			} else if req.Name == "_dbwrite" {
@@ -430,6 +439,14 @@ func trackVitals() {
 
 			} else if req.Name == "_memcache" {
 				m.RecordValue("MemcacheMillis", req.I)
+
+			} else if req.Name == "_filterMessages" {
+				counters["nDupes"] += req.I
+				counters["AirspaceSigCount"] = req.J
+				counters["AirspaceAircraftCount"] = req.K
+				
+			} else if req.Name == "_bufferTracks" {
+				counters["TrackbufferSize"] = req.I
 
 			} else if req.Name == "_lastBundleTime" {
 				vitalsResponseChan<- VitalsResponse{T: lastBundleTime}
@@ -532,11 +549,10 @@ func filterNewMessages(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*ads
 			// break, in case weAreDone
 
 		case msgs := <-msgsIn:
-			if newMsgs := as.MaybeUpdate(msgs); len(newMsgs) > 0 {
+			newMsgs := as.MaybeUpdate(msgs)
+			if len(newMsgs) > 0 {
 				// Pass them to the other goroutine for dissemination, and get back to business.
 				msgsOut <- newMsgs
-				//Log.Printf("- %2d were new (%2d already seen) - %s",
-				//	len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
 
 				if fOnAppEngine {
 					// Memcache no longer available on appengine flex (!)
@@ -545,6 +561,15 @@ func filterNewMessages(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*ads
 					//Log.Printf("- %2d were new (%2d already seen) - %s",
 					//	len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
 				}
+			}
+
+			// Update our vital stats, with info about the airspace & deduping
+			nSigs,nAircraft := as.Sizes()
+			vitalsRequestChan<- VitalsRequest{
+				Name: "_filterMessages",
+				I:int64(len(msgs) - len(newMsgs)),
+				J:nSigs,
+				K:nAircraft,
 			}
 		}
 	}
@@ -571,6 +596,8 @@ func bufferTracks(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*adsb.Com
 				tb.AddMessage(m)
 			}
 			tb.Flush(msgsOut)
+
+			vitalsRequestChan<- VitalsRequest{Name: "_bufferTracks", I:tb.Size()}
 		}
 	}
 

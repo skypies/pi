@@ -40,6 +40,9 @@ type Airspace struct {
 	Signatures `json:"-"`                  // What we've seen "recently"; for deduping
 	Aircraft map[adsb.IcaoId]AircraftData  // "what is in the sky right now"; for realtime serving
 }
+func (a Airspace)Sizes() (int64,int64) {
+	return int64(len(a.Signatures.CurrMsgs) + len(a.Signatures.PrevMsgs)), int64(len(a.Aircraft))
+}
 
 // {{{ NewAirspace
 
