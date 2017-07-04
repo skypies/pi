@@ -460,10 +460,6 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 			I: int64(len(msgs)),
 			T: msgs[len(msgs)-1].GeneratedTimestampUTC,
 		}
-
-		endMutex.Lock()
-		nCallbackEnds++
-		endMutex.Unlock()
 	}
 
 	
