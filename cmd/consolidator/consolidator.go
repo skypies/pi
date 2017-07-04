@@ -268,12 +268,11 @@ type ReceiverSummary struct {
 
 func memStats() string {
 	ms := runtime.MemStats{}
-	n := runtime.NumGoroutine()
+
 	runtime.ReadMemStats(&ms)
-	return fmt.Sprintf("go:%d(%d-%d); obj(%8d=%d-%d), heap(alloc=%d, idle=%d), stack=%d",
-		n, nCallbackStarts, nCallbackEnds,
-		ms.HeapObjects, ms.Mallocs, ms.Frees,
-		ms.HeapAlloc, ms.HeapIdle, ms.StackInuse)
+	return fmt.Sprintf("go:% 5d(% 4d cb); heap:% 9d, % 9d; stack:% 9d",
+		runtime.NumGoroutine(), nReceiveCallbacks,
+		ms.HeapObjects, ms.HeapAlloc, ms.StackInuse)
 }
 
 func trackVitals() {
@@ -409,6 +408,8 @@ func trackVitals() {
 // }}}
 // {{{ pullNewFromPubsub
 
+var nReceiveCallbacks = 0
+
 func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 	ctx := getContext()
 	as := airspace.Airspace{}
@@ -433,15 +434,15 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 	sub.ReceiveSettings.MaxOutstandingMessages = 10 // put a limit on how many we juggle
 	as.RollWhenThisMany = 5000                      // Dedupe set consists of 1-2x this number
 
-	var startMutex = &sync.Mutex{}
-	var endMutex = &sync.Mutex{}
+	var mu = &sync.Mutex{}
 	
 	// sub.Receive invokes concurrent instances of this callback; we funnel their
 	// (unpacked) responses back into the msgsOut channel, for the processing pipeline to eat
 	callback := func(ctx context.Context, m *pubsub.Message) {
-		startMutex.Lock()
-		nCallbackStarts++
-		startMutex.Unlock()
+		mu.Lock()
+		nReceiveCallbacks++
+		mu.Unlock()
+
 		m.Ack()
 
 		msgs,err := mypubsub.UnpackPubsubMessage(m)
@@ -455,8 +456,8 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 		// Update our vital stats, with info about this bundle
 		vitalsRequestChan<- VitalsRequest{
 			Name: "_bundle",
-			Str:msgs[0].ReceiverName,
-			I:int64(len(msgs)),
+			Str: msgs[0].ReceiverName,
+			I: int64(len(msgs)),
 			T: msgs[len(msgs)-1].GeneratedTimestampUTC,
 		}
 
