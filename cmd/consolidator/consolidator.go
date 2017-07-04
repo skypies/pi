@@ -220,7 +220,7 @@ func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
 	tStart := time.Now()
 
 	db := fgae.NewDB(getContext())
-	db.Backend = dsprovider.CloudDSProvider{fProjectName}
+	db.Backend = dsprovider.CloudDSProvider{fProjectName, nil}
 
 	frag := fdb.MessagesToTrackFragment(msgs)
 
@@ -333,12 +333,12 @@ type ReceiverSummary struct {
 }
 
 func memStats() string {
-	ms := runtime.Memstats{}
+	ms := runtime.MemStats{}
 	n := runtime.NumGoroutine()
 	runtime.ReadMemStats(&ms)
 	return fmt.Sprintf("go:%d; obj(%d-%d=%d), heap(alloc=%d, idle=%d), stack=%d", n,
 		ms.Mallocs, ms.Frees, ms.HeapObjects,
-		ms.HeapAlloc, ms.HeapIdle, ms.StackInUse)
+		ms.HeapAlloc, ms.HeapIdle, ms.StackInuse)
 }
 
 func trackVitals() {
