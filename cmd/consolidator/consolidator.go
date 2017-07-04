@@ -220,14 +220,12 @@ func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
 	tStart := time.Now()
 
 	db := fgae.NewDB(getContext())
-	db.Backend = dsprovider.CloudDSProvider{fProjectName,nil}
+	db.Backend = dsprovider.CloudDSProvider{fProjectName}
 
 	frag := fdb.MessagesToTrackFragment(msgs)
 
 	if err := db.AddTrackFragment(frag); err != nil {
-		Log.Printf("flushPost/ToDatastore: %v\n--\n", err)
-//	} else {
-//		Log.Printf("DB write OK\n")
+		Log.Printf("flushPost/ToDatastore: err: %v\n--\n", err)
 	}
 
 	vitalsRequestChan<- VitalsRequest{
@@ -334,6 +332,15 @@ type ReceiverSummary struct {
 	LastBundleTime  time.Time
 }
 
+func memStats() string {
+	ms := runtime.Memstats{}
+	n := runtime.NumGoroutine()
+	runtime.ReadMemStats(&ms)
+	return fmt.Sprintf("go:%d; obj(%d-%d=%d), heap(alloc=%d, idle=%d), stack=%d", n,
+		ms.Mallocs, ms.Frees, ms.HeapObjects,
+		ms.HeapAlloc, ms.HeapIdle, ms.StackInUse)
+}
+
 func trackVitals() {
 	startupTime := time.Now().Round(time.Second)
 	lastBundleTime := time.Now()
@@ -402,8 +409,9 @@ func trackVitals() {
 			Log.Printf("vital dump:-\n%s", vitals2str())
 			tLastDump = time.Now()
 		}
-		if time.Since(tLastCounts) > time.Second {
-			Log.Printf("* Trackbuffer: %d elems, Airspace: (%d,%d) elems\n",
+		if time.Since(tLastCounts) > 5 * time.Second {
+			Log.Printf("* memstats  %s\n", memStats())
+			Log.Printf("* Trackbuffer: %d msgs, Airspace: %d sigs, %d aircraft\n",
 				counters["TrackbufferSize"], counters["AirspaceSigCount"],
 				counters["AirspaceAircraftCount"])
 			tLastCounts = time.Now()
