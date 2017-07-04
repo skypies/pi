@@ -31,6 +31,7 @@ import (
 	"os/signal"
 	"runtime"
 	"sort"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/pubsub"
@@ -46,7 +47,7 @@ import (
 	"github.com/skypies/flightdb/fgae"
 	"github.com/skypies/pi/airspace"
 	"github.com/skypies/util/dsprovider"
-	"github.com/skypies/util/gaeutil"
+	//"github.com/skypies/util/gaeutil"
 	"github.com/skypies/util/histogram"
 	"github.com/skypies/util/metrics"
 	mypubsub "github.com/skypies/util/pubsub" // This is adding less value over time; kill ?
@@ -236,82 +237,15 @@ func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
 }
 
 // }}}
-// {{{ pushAirspaceToMemcache
-
-var tLastMemcache = time.Now()
-
-/* TBD, when appengine flex gets a memcache API ...
-
-func saveSingletonToMemcache(ctx context.Context, name string, data []byte) error {
-	if len(data) > 950000 {
-		return fmt.Errorf("singleton too large (name=%s, size=%d)", name, len(data))
-	}
-	item := &memcache.Item{Key:singletonMCKey(name), Value:data}
-	return memcache.Set(ctx, item)
-}
-*/
-
-func pushAirspaceToMemcache(ctx context.Context, as *airspace.Airspace) {
-	if time.Since(tLastMemcache) < 500 * time.Millisecond { return }
-
-	// Take from airspace/memcache:JustAircraftToMemcache, and goroutinzed
-	justAircraft := airspace.Airspace{Aircraft: as.Aircraft}
-	if b,err := justAircraft.ToBytes(); err == nil {
-		go func(){
-			tStart := time.Now()
-
-			if err := gaeutil.SaveSingletonToMemcache(ctx, "airspace", b); err != nil {
-			//if err := saveSingletonToMemcache(ctx, "airspace", b); err != nil {
-				Log.Printf("main/JustAircraftToMemcache: err: %v", err)
-			} else {
-				vitalsRequestChan<- VitalsRequest{
-					Name: "_memcache",
-					I:(time.Since(tStart).Nanoseconds() / 1000000),
-				}
-			}
-		}()
-	}
-	
-	tLastMemcache = time.Now()
-}
-
-// }}}
-// {{{ pubsubMsgCallback
-
-func newPubsubMsgCallback(msgsOut chan<- []*adsb.CompositeMsg) func(context.Context, *pubsub.Message) {
-
-	// All objects/routines used in here need to be safe for concurrent access
-	return func(ctx context.Context, m *pubsub.Message) {
-		m.Ack()
-
-		msgs,err := mypubsub.UnpackPubsubMessage(m)
-		if err != nil {
-			Log.Printf("[%d] Unpack: err: %v", err)
-			return
-		}
-
-		msgsOut <- msgs
-
-		// Update our vital stats, with info about this bundle
-		vitalsRequestChan<- VitalsRequest{
-			Name: "_bundle",
-			Str:msgs[0].ReceiverName,
-			I:int64(len(msgs)),
-			J:int64(len(msgs)), //int64(len(newMsgs)), // TODO(abw): repair this
-			K:0,
-						
-			T: msgs[len(msgs)-1].GeneratedTimestampUTC,
-		}
-	}
-}
-
-// }}}
 
 // {{{ trackVitals
 
 // These two channels are accessible from all goroutines
 var vitalsRequestChan = make(chan VitalsRequest, 40)
 var vitalsResponseChan = make(chan VitalsResponse, 5)  // Only used for stats output
+
+var nCallbackStarts = 0
+var nCallbackEnds = 0
 
 type VitalsRequest struct {
 	Name             string  // _blah
@@ -336,8 +270,9 @@ func memStats() string {
 	ms := runtime.MemStats{}
 	n := runtime.NumGoroutine()
 	runtime.ReadMemStats(&ms)
-	return fmt.Sprintf("go:%d; obj(%d-%d=%d), heap(alloc=%d, idle=%d), stack=%d", n,
-		ms.Mallocs, ms.Frees, ms.HeapObjects,
+	return fmt.Sprintf("go:%d(%d-%d); obj(%8d=%d-%d), heap(alloc=%d, idle=%d), stack=%d",
+		n, nCallbackStarts, nCallbackEnds,
+		ms.HeapObjects, ms.Mallocs, ms.Frees,
 		ms.HeapAlloc, ms.HeapIdle, ms.StackInuse)
 }
 
@@ -481,12 +416,14 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 	setupPubsub()
 	Log.Printf("(pullNewFromPubsub starting)\n")
 	
+/*
 	if fOnAppEngine {
 		if err := as.EverythingFromMemcache(ctx); err != nil {
 			Log.Printf("airspace.EverythingFromMemcache: %v", err)
 			as = airspace.Airspace{}
 		}
 	}
+*/
 
 	cancelCtx, cancelFunc := context.WithCancel(ctx)
 
@@ -495,11 +432,40 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 
 	sub.ReceiveSettings.MaxOutstandingMessages = 10 // put a limit on how many we juggle
 	as.RollWhenThisMany = 5000                      // Dedupe set consists of 1-2x this number
+
+	var startMutex = &sync.Mutex{}
+	var endMutex = &sync.Mutex{}
 	
 	// sub.Receive invokes concurrent instances of this callback; we funnel their
-	// (unpacked) responses back into a channel, for the processing pipeline to eat
-	callback := newPubsubMsgCallback(msgsOut)
+	// (unpacked) responses back into the msgsOut channel, for the processing pipeline to eat
+	callback := func(ctx context.Context, m *pubsub.Message) {
+		startMutex.Lock()
+		nCallbackStarts++
+		startMutex.Unlock()
+		m.Ack()
 
+		msgs,err := mypubsub.UnpackPubsubMessage(m)
+		if err != nil {
+			Log.Printf("[%d] Unpack: err: %v", err)
+			return
+		}
+
+		msgsOut <- msgs
+
+		// Update our vital stats, with info about this bundle
+		vitalsRequestChan<- VitalsRequest{
+			Name: "_bundle",
+			Str:msgs[0].ReceiverName,
+			I:int64(len(msgs)),
+			T: msgs[len(msgs)-1].GeneratedTimestampUTC,
+		}
+
+		endMutex.Lock()
+		nCallbackEnds++
+		endMutex.Unlock()
+	}
+
+	
 	// sub.Receive doesn't terminate, so spin off into a goroutine
 	go func() {
 		Log.Printf("(sub.Receive starting)\n")
@@ -515,11 +481,12 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 	cancelFunc() // terminates call to sub.Receive()
 
 	if fOnAppEngine {
+/*
 		// We're shutting down, so save all the deduping signatures
 		if err := as.EverythingToMemcache(ctx); err != nil {
 			Log.Printf(" -- pullNewFromPubsub clean exit; memcache: %v", err)
 		}
-
+*/
 	} else {
 		// We're not on AppEngine; clean up our wasteful subscription
 		pc := mypubsub.NewClient(ctx, fProjectName)
