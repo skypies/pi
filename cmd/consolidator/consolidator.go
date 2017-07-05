@@ -212,6 +212,8 @@ func getContext() context.Context {
 // {{{ flushTrackToDatastore
 
 func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
+	return // DELETEME - only here to testhelp pin down the goroutine leak
+
 	if ! fOnAppEngine {
 		//Log.Printf(" -- (%d pushed for %s)\n", len(msgs), string(msgs[0].Icao24))
 		vitalsRequestChan<- VitalsRequest{Name: "_dbwrite", J:int64(myId)}
@@ -270,7 +272,7 @@ func memStats() string {
 	ms := runtime.MemStats{}
 
 	runtime.ReadMemStats(&ms)
-	return fmt.Sprintf("go:% 5d(% 4d cb); heap:% 9d, % 9d; stack:% 9d",
+	return fmt.Sprintf("go:% 5d(% 4d cb); heap:% 13d, % 13d; stack:% 13d",
 		runtime.NumGoroutine(), nReceiveCallbacks,
 		ms.HeapObjects, ms.HeapAlloc, ms.StackInuse)
 }
