@@ -212,8 +212,6 @@ func getContext() context.Context {
 // {{{ flushTrackToDatastore
 
 func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
-	return // DELETEME - only here to testhelp pin down the goroutine leak
-
 	if ! fOnAppEngine {
 		//Log.Printf(" -- (%d pushed for %s)\n", len(msgs), string(msgs[0].Icao24))
 		vitalsRequestChan<- VitalsRequest{Name: "_dbwrite", J:int64(myId)}
@@ -413,12 +411,19 @@ func trackVitals() {
 var nReceiveCallbacks = 0
 
 func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
-	ctx := getContext()
+	ctx, ctxCancelFunc := context.WithCancel(getContext())
+
 	as := airspace.Airspace{}
+	as.RollWhenThisMany = 5000                      // Dedupe set consists of 1-2x this number
 
 	setupPubsub()
-	Log.Printf("(pullNewFromPubsub starting)\n")
-	
+	Log.Printf("(pullNewFromPubsub starting)\n")	
+
+	pc := mypubsub.NewClient(ctx, fProjectName)
+	sub := pc.Subscription(fPubsubSubscription)
+
+	sub.ReceiveSettings.MaxOutstandingMessages = 10 // put a limit on how many we juggle
+
 /*
 	if fOnAppEngine {
 		if err := as.EverythingFromMemcache(ctx); err != nil {
@@ -427,14 +432,6 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 		}
 	}
 */
-
-	cancelCtx, cancelFunc := context.WithCancel(ctx)
-
-	pc := mypubsub.NewClient(cancelCtx, fProjectName)
-	sub := pc.Subscription(fPubsubSubscription)
-
-	sub.ReceiveSettings.MaxOutstandingMessages = 10 // put a limit on how many we juggle
-	as.RollWhenThisMany = 5000                      // Dedupe set consists of 1-2x this number
 
 	var mu = &sync.Mutex{}
 	
@@ -446,7 +443,6 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 		mu.Unlock()
 
 		m.Ack()
-
 		msgs,err := mypubsub.UnpackPubsubMessage(m)
 		if err != nil {
 			Log.Printf("[%d] Unpack: err: %v", err)
@@ -463,12 +459,11 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 			T: msgs[len(msgs)-1].GeneratedTimestampUTC,
 		}
 	}
-
 	
 	// sub.Receive doesn't terminate, so spin off into a goroutine
 	go func() {
 		Log.Printf("(sub.Receive starting)\n")
-		if err := sub.Receive(cancelCtx, callback); err != nil {
+		if err := sub.Receive(ctx, callback); err != nil {
 			Log.Printf("sub.Receive() err:%v", err)
 			return
 		}
@@ -477,7 +472,7 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 	// Block until done channel lights up
 	<-done
 
-	cancelFunc() // terminates call to sub.Receive()
+	ctxCancelFunc() // terminates call to sub.Receive()
 
 	if fOnAppEngine {
 /*
