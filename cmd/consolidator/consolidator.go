@@ -225,10 +225,11 @@ func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
 
 	frag := fdb.MessagesToTrackFragment(msgs)
 
+	/*
 	if err := db.AddTrackFragment(frag); err != nil {
 		Log.Printf("flushPost/ToDatastore: err: %v\n--\n", err)
 	}
-
+*/
 	vitalsRequestChan<- VitalsRequest{
 		Name: "_dbwrite",
 		I:(time.Since(tStart).Nanoseconds() / 1000000),
