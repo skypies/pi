@@ -224,12 +224,12 @@ func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
 	db.Backend = dsprovider.CloudDSProvider{fProjectName, nil}
 
 	frag := fdb.MessagesToTrackFragment(msgs)
-
-	/*
+/*
 	if err := db.AddTrackFragment(frag); err != nil {
 		Log.Printf("flushPost/ToDatastore: err: %v\n--\n", err)
 	}
 */
+	_=frag
 	vitalsRequestChan<- VitalsRequest{
 		Name: "_dbwrite",
 		I:(time.Since(tStart).Nanoseconds() / 1000000),
