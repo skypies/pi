@@ -211,7 +211,7 @@ func getContext() context.Context {
 // }}}
 // {{{ flushTrackToDatastore
 
-func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
+func flushTrackToDatastore(myId int, p dsprovider.DatastoreProvider, msgs []*adsb.CompositeMsg) {
 	if ! fOnAppEngine {
 		//Log.Printf(" -- (%d pushed for %s)\n", len(msgs), string(msgs[0].Icao24))
 		vitalsRequestChan<- VitalsRequest{Name: "_dbwrite", J:int64(myId)}
@@ -221,15 +221,13 @@ func flushTrackToDatastore(myId int, msgs []*adsb.CompositeMsg) {
 	tStart := time.Now()
 
 	db := fgae.NewDB(getContext())
-	db.Backend = dsprovider.CloudDSProvider{fProjectName, nil}
+	db.Backend = p
 
 	frag := fdb.MessagesToTrackFragment(msgs)
-/*
 	if err := db.AddTrackFragment(frag); err != nil {
 		Log.Printf("flushPost/ToDatastore: err: %v\n--\n", err)
 	}
-*/
-	_=frag
+
 	vitalsRequestChan<- VitalsRequest{
 		Name: "_dbwrite",
 		I:(time.Since(tStart).Nanoseconds() / 1000000),
@@ -602,7 +600,7 @@ func workerDispatch(msgsIn <-chan []*adsb.CompositeMsg, workersOut []chan []*ads
 // {{{ flushTracks
 
 // The worker bee function
-func flushTracks(myId int, msgsIn <-chan []*adsb.CompositeMsg) {
+func flushTracks(myId int, p dsprovider.DatastoreProvider, msgsIn <-chan []*adsb.CompositeMsg) {
 	//Log.Printf("(flushTracks/%03d starting)\n", myId)
 
 	for {
@@ -612,7 +610,7 @@ func flushTracks(myId int, msgsIn <-chan []*adsb.CompositeMsg) {
 		case <-time.After(time.Second):
 			// break
 		case msgs := <-msgsIn:
-			flushTrackToDatastore(myId, msgs)
+			flushTrackToDatastore(myId, p, msgs)
 		}			
 	}
 
@@ -631,12 +629,15 @@ func main() {
 	msgChan3 := make(chan []*adsb.CompositeMsg, 3)
 	workerChans := []chan []*adsb.CompositeMsg{}
 
+	db,err := dsprovider.NewCloudDSProvider(getContext(), fProjectName)
+	if err != nil { Log.Fatal(err) }
+
 	nWorkers := 256 // avoid getting backed up on DB writes
 	if !fOnAppEngine { nWorkers = 16 }
 	for i:=0; i<nWorkers; i++ {
 		workerChan := make(chan []*adsb.CompositeMsg, 3)
 		workerChans = append(workerChans, workerChan)
-		go flushTracks(i, workerChan)          // worker bee, write per-flight fragments to disc
+		go flushTracks(i, db, workerChan)      // worker bee, write per-flight fragments to disc
 	}
 
 	go pullNewFromPubsub(msgChan1)           // sends mixed bundles down chan1
