@@ -47,7 +47,7 @@ import (
 	"github.com/skypies/flightdb/fgae"
 	"github.com/skypies/pi/airspace"
 	"github.com/skypies/util/dsprovider"
-	//"github.com/skypies/util/gaeutil"
+	"github.com/skypies/util/gaeutil"
 	"github.com/skypies/util/histogram"
 	"github.com/skypies/util/metrics"
 	mypubsub "github.com/skypies/util/pubsub" // This is adding less value over time; kill ?
@@ -62,7 +62,8 @@ var (
 	fPubsubInputTopic      string
 	fPubsubSubscription    string
 	fOnAppEngine           bool
-
+	fVerbosity             int
+	
 	tGlobalStart           time.Time
 	stackTraceBytes      []byte
 
@@ -82,7 +83,8 @@ func init() {
 		"Name of the pubsub topic we read from (i.e. add our subscription to)")
 	flag.StringVar(&fPubsubSubscription, "sub", "consolidator",
 		"Name of the pubsub subscription on the adsb-inbound topic")
-	flag.BoolVar(&fOnAppEngine, "ae", true, "on appengine (use http://metadata/ etc)")
+	flag.BoolVar(&fOnAppEngine, "ae", true, "whether on appengine (can use http://metadata/ etc)")
+	flag.IntVar(&fVerbosity, "v", 0, "verbosity level")
 	flag.Parse()
 
 	http.HandleFunc("/", statusHandler)
@@ -233,6 +235,38 @@ func flushTrackToDatastore(myId int, p dsprovider.DatastoreProvider, msgs []*ads
 		I:(time.Since(tStart).Nanoseconds() / 1000000),
 		J:int64(myId),
 	}
+}
+
+// }}}
+// {{{ pushAirspaceToMemcache
+
+var tLastMemcache = time.Now()
+var memcacheMutex = sync.Mutex{}
+
+func pushAirspaceToMemcache(ctx context.Context, as *airspace.Airspace) {
+	memcacheMutex.Lock()
+	defer memcacheMutex.Unlock()
+
+	if time.Since(tLastMemcache) < 500 * time.Millisecond { return }
+
+	justAircraft := airspace.Airspace{Aircraft: as.Aircraft}
+	if b,err := justAircraft.ToBytes(); err == nil {
+		go func(){
+			tStart := time.Now()
+
+			url := "fdb.serfr1.org/fdb/memcachesingleton"
+			if err := gaeutil.SaveSingletonToMemcacheURL(ctx, "airspace", b, url); err != nil {
+				Log.Printf("main/JustAircraftToMemcache: err: %v", err)
+			} else {
+				vitalsRequestChan<- VitalsRequest{
+					Name: "_memcache",
+					I:(time.Since(tStart).Nanoseconds() / 1000000),
+				}
+			}
+		}()
+	}
+	
+	tLastMemcache = time.Now()
 }
 
 // }}}
@@ -501,7 +535,8 @@ func filterNewMessages(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*ads
 	as := airspace.NewAirspace()
 	as.Signatures.RollAfter = 10 * time.Second // very aggressive, while we have probs
 	
-/*	ctx := getContext()
+	ctx := getContext()
+	/*	
 	if fOnAppEngine {
 		if err := as.EverythingFromMemcache(ctx); err != nil {
 			Log.Printf("airspace.EverythingFromMemcache: %v", err)
@@ -523,11 +558,12 @@ func filterNewMessages(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*ads
 				msgsOut <- newMsgs
 
 				if fOnAppEngine {
-					// Memcache no longer available on appengine flex (!)
-					// pushAirspaceToMemcache(ctx, as)
-				} else {
-					//Log.Printf("- %2d were new (%2d already seen) - %s",
-					//	len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
+					pushAirspaceToMemcache(ctx, &as)
+				}
+
+				if fVerbosity > 0 {
+					Log.Printf("- %2d were new (%2d already seen) - %s",
+						len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
 				}
 			}
 
