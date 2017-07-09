@@ -367,21 +367,13 @@ func trackVitals() {
 	// }}}
 
 	tLastDump := time.Now()
-	tLastCounts := time.Now()
 	
 	for {
 		if weAreDone() { break }
 
-		if time.Since(tLastDump) > time.Minute {
+		if time.Since(tLastDump) > time.Minute * 5 {
 			Log.Printf("vital dump:-\n%s", vitals2str())
 			tLastDump = time.Now()
-		}
-		if time.Since(tLastCounts) > 5 * time.Second {
-			Log.Printf("* memstats  %s\n", memStats())
-			Log.Printf("* Trackbuffer: %d msgs, Airspace: %d sigs, %d aircraft\n",
-				counters["TrackbufferSize"], counters["AirspaceSigCount"],
-				counters["AirspaceAircraftCount"])
-			tLastCounts = time.Now()
 		}
 
 		select {
@@ -534,16 +526,11 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 // This goroutine owns the airspace object (which is not concurrent safe)
 func filterNewMessages(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*adsb.CompositeMsg) {
 	as := airspace.NewAirspace()
-	as.Signatures.RollAfter = 10 * time.Second // very aggressive, while we have probs
+	as.Signatures.RollAfter = 60 * time.Second // very aggressive, while we have probs
 	
 	ctx := getContext()
-	/*	
-	if fOnAppEngine {
-		if err := as.EverythingFromMemcache(ctx); err != nil {
-			Log.Printf("airspace.EverythingFromMemcache: %v", err)
-			as = airspace.Airspace{}
-		}
-	} */
+
+	// TODO - make `as.EverythingFromMemcache(ctx)` work using webhook thing
 
 	for {
 		if weAreDone() { break } // Clean exit
@@ -664,6 +651,7 @@ func main() {
 	msgChan3 := make(chan []*adsb.CompositeMsg, 3)
 	workerChans := []chan []*adsb.CompositeMsg{}
 
+	// The cloud provider's client leaks goroutines, so just use one forever
 	db,err := dsprovider.NewCloudDSProvider(getContext(), fProjectName)
 	if err != nil { Log.Fatal(err) }
 
