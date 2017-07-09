@@ -1,10 +1,9 @@
 // The consolidator program subscribes to a topic on Google Cloud Pubsub, and reads bundles of
 // composite ADSB messages from it. These are deduped, and unique ones are published to a
-// different topic. A snapshot is written to memcache, for other apps to access.
+// different topic. A snapshot is written to memcache twice a second, for other apps to access.
 
 // It should be deployed as an AppEngine Flexible App, as per the app.yaml file:
 //   $ gcloud app deploy
-//   https://cloud.google.com/appengine/docs/flexible/go/testing-and-deploying-your-app
 
 // If data is written to datastore, you may need to deploy some datastore indices, too:
 //   $ gcloud app deploy ./index.yaml --promote
@@ -38,9 +37,6 @@ import (
 	
 	"golang.org/x/net/context"
 
-	// Deprecated: https://cloud.google.com/appengine/docs/flexible/go/upgrading
-	//"google.golang.org/appengine"
-
 	"github.com/skypies/adsb"
 	"github.com/skypies/adsb/trackbuffer"
 	fdb "github.com/skypies/flightdb"
@@ -62,6 +58,7 @@ var (
 	fPubsubInputTopic      string
 	fPubsubSubscription    string
 	fOnAppEngine           bool
+	fAirspaceWebhook       string
 	fVerbosity             int
 	
 	tGlobalStart           time.Time
@@ -83,6 +80,8 @@ func init() {
 		"Name of the pubsub topic we read from (i.e. add our subscription to)")
 	flag.StringVar(&fPubsubSubscription, "sub", "consolidator",
 		"Name of the pubsub subscription on the adsb-inbound topic")
+	flag.StringVar(&fAirspaceWebhook, "hook-airspace", "fdb.serfr1.org/fdb/memcachesingleton",
+		"URL to publish airspace updates to")
 	flag.BoolVar(&fOnAppEngine, "ae", true, "whether on appengine (can use http://metadata/ etc)")
 	flag.IntVar(&fVerbosity, "v", 0, "verbosity level")
 	flag.Parse()
@@ -196,10 +195,8 @@ func addSIGINTHandler() {
 // }}}
 // {{{ getContext
 
-// If we're on appengine, use their special background context; we
-// need it to talk to appengine services such as Memcache. If we're
-// not on appengine, https://metadata/ won't exist and so we can't use
-// the appengine context; but in that case any old context will do.
+// Since Appengine Flexible Environment banned direct AppEngine APIs, we're using cloud
+// APIs everywhere, so no longer need special contexts for particular services.
 
 func getContext() context.Context {
 	return context.Background()
@@ -238,12 +235,14 @@ func flushTrackToDatastore(myId int, p dsprovider.DatastoreProvider, msgs []*ads
 }
 
 // }}}
-// {{{ pushAirspaceToMemcache
+// {{{ maybePostAirspace
 
 var tLastMemcache = time.Now()
 var memcacheMutex = sync.Mutex{}
 
-func pushAirspaceToMemcache(ctx context.Context, as *airspace.Airspace) {
+func maybePostAirspace(ctx context.Context, as *airspace.Airspace) {
+	if fAirspaceWebhook == "" { return }
+	
 	memcacheMutex.Lock()
 	defer memcacheMutex.Unlock()
 
@@ -254,9 +253,10 @@ func pushAirspaceToMemcache(ctx context.Context, as *airspace.Airspace) {
 		go func(){
 			tStart := time.Now()
 
-			url := "fdb.serfr1.org/fdb/memcachesingleton"
-			if err := gaeutil.SaveSingletonToMemcacheURL(ctx, "airspace", b, url); err != nil {
-				Log.Printf("main/JustAircraftToMemcache: err: %v", err)
+			// There is no cloud API for memcache, so we have to update the entry indirectly, via
+			// a handler running in an appengine standard app.
+			if err := gaeutil.SaveSingletonToMemcacheURL("airspace", b, fAirspaceWebhook); err != nil {
+				Log.Printf("main/maybePostAirspace(%s): err: %v", fAirspaceWebhook, err)
 			} else {
 				vitalsRequestChan<- VitalsRequest{
 					Name: "_memcache",
@@ -516,6 +516,7 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 */
 	} else {
 		// We're not on AppEngine; clean up our wasteful subscription
+		ctx = getContext() // use a new context, prev has been canceled
 		pc := mypubsub.NewClient(ctx, fProjectName)
 		if err := mypubsub.DeleteSub(ctx, pc, fPubsubSubscription); err != nil {
 			Log.Printf(" -- pullNewFromPubsub clean exit; del '%s': %v", fPubsubSubscription, err)
@@ -557,9 +558,7 @@ func filterNewMessages(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*ads
 				// Pass them to the other goroutine for dissemination, and get back to business.
 				msgsOut <- newMsgs
 
-				if fOnAppEngine {
-					pushAirspaceToMemcache(ctx, &as)
-				}
+				maybePostAirspace(ctx, &as)
 
 				if fVerbosity > 0 {
 					Log.Printf("- %2d were new (%2d already seen) - %s",
@@ -693,201 +692,6 @@ func main() {
 }
 
 // }}}
-
-/* Old */
-/*
-// {{{ pullNewFromPubsub
-
-func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
-	ctx := getContext()
-	as := airspace.Airspace{}
-
-	setupPubsub()
-	Log.Printf("(pubsub setup done)\n")
-
-	dWedgeThresh := time.Minute // We get ~2.5/s, so nothing for 60s is bad
-	
-	if fOnAppEngine {
-		if err := as.EverythingFromMemcache(ctx); err != nil {
-			Log.Printf("airspace.EverythingFromMemcache: %v", err)
-			as = airspace.Airspace{}
-		}
-	}
-	
-	nSpawns := 0
-outerLoop:
-	for {
-		if weAreDone() { break outerLoop }
-
-		Log.Printf("(pubsub: starting from top of outerloop)")
-
-		youWereDiscarded := make(chan struct{}) // Closed when we give up on the worker
-
-		go pullPubsubUntilWedge(ctx, &as, nSpawns, youWereDiscarded, msgsOut)
-
-		// Now wait until it all goes wrong; each 5s, check we're still getting bundles.
-	innerLoop:
-		for {
-			if weAreDone() { break outerLoop }
-			time.Sleep(5 * time.Second)
-			
-			vitalsRequestChan<- VitalsRequest{Name:"_lastBundleTime"}
-			vr := <-vitalsResponseChan
-
-			if time.Since(vr.T) > dWedgeThresh {
-				Log.Printf("Watchdog: last bundle was %s ago, respawning (%d)", time.Since(vr.T), nSpawns)
-				vitalsRequestChan<- VitalsRequest{Name: "_pubsubwedge"}
-				nSpawns++
-				break innerLoop
-			}
-		}
-		
-		// Unplanned exit; prob a wedge; tell it to die (if it wakes up), then start up another.
-		close(youWereDiscarded)
-		time.Sleep(2 * time.Second)
-	}
-
-	if fOnAppEngine {
-		// We're shutting down, so save all the deduping signatures
-		if err := as.EverythingToMemcache(ctx); err != nil {
-			Log.Printf(" -- pullNewFromPubsub clean exit; memcache: %v", err)
-		}
-
-	} else {
-		// We're not on AppEngine; clean up our wasteful subscription
-		pc := mypubsub.NewClient(ctx, fProjectName)
-		if err := mypubsub.DeleteSub(ctx, pc, fPubsubSubscription); err != nil {
-			Log.Printf(" -- pullNewFromPubsub clean exit; del '%s': %v", fPubsubSubscription, err)
-		}			
-	}
-	
-	Log.Printf(" -- pullNewFromPubsub clean exit\n")
-}
-
-// }}}
-// {{{ pullPubsubUntilWedge
-
-// Keep reading the pubsub iterator indefinitely, until it errors. May well wedge. If the iAmDone
-// channel closes, will terminate.
-func pullPubsubUntilWedge(ctx context.Context, as *airspace.Airspace, id int, iWasDiscarded <-chan struct{}, msgsOut chan<- []*adsb.CompositeMsg) {
-
-	pc := mypubsub.NewClient(ctx, fProjectName)	
-	it,err := pc.Subscription(fPubsubSubscription).Pull(ctx)
-	if err != nil {
-		Log.Printf("pc.Sub(%s).Pull err:%v", fPubsubSubscription, err)
-		return
-	}
-  defer it.Stop()
-
-	Log.Printf("(pubsub innerloop %d: pulling from topic:sub %s:%s)",
-		id, fPubsubInputTopic, fPubsubSubscription)
-
-	tPrevEnd := time.Now()
-	
-	for {
-		if weAreDone() { break } // Clean exit
-		
-		// Check if the watchdog timed out on us and started another; if so we should go away.
-		select{
-		case <-iWasDiscarded:
-			Log.Printf("pullPubsubUntilWedge %d woke up, was discarded, aborting", id)
-			return
-		default: // carry on, we've not been discarded
-		}
-		
-		tStart := time.Now()
-
-		m,err := it.Next()
-		if err == iterator.Done {
-			break
-		} else if err != nil {
-			Log.Printf("[%d] it.Next err: %v", id, err)
-			return
-		}
-
-		m.Done(true) // Acknowledge the message.
-
-		msgs,err := mypubsub.UnpackPubsubMessage(m)
-		if err != nil {
-			Log.Printf("[%d] Unpack: err: %v", id, fPubsubSubscription, err)
-			time.Sleep(time.Second * 10)
-			continue
-		}
-
-		tPullDone := time.Now()
-		tMsgsSent := tPullDone
-		newMsgs := as.MaybeUpdate(msgs)
-		
-		if len(newMsgs) > 0 {
-			// Pass them to the other goroutine for dissemination, and get back to business.
-			msgsOut <- newMsgs
-			tMsgsSent = time.Now()
-
-			if fOnAppEngine {
-				pushAirspaceToMemcache(ctx, as)
-			} else {
-				//Log.Printf("- %2d were new (%2d already seen) - %s",
-				//	len(newMsgs), len(msgs)-len(newMsgs), msgs[0].ReceiverName)
-			}
-		}
-
-		// Update our vital stats, with info about this bundle
-		//airspaceBytes,_ := as.ToBytes()
-		vitalsRequestChan<- VitalsRequest{
-			Name: "_bundle",
-			Str:msgs[0].ReceiverName,
-			I:int64(len(msgs)),
-			J:int64(len(newMsgs)),
-			K:int64(id),
-			
-			// Some primitive wait state data (latencies in millis)
-			L:(tPullDone.Sub(tStart).Nanoseconds() / 1000000),
-			M:(tMsgsSent.Sub(tPullDone).Nanoseconds() / 1000000),
-			N:(tStart.Sub(tPrevEnd).Nanoseconds() / 1000000),  // prelude/zombie time
-			
-			T: msgs[len(msgs)-1].GeneratedTimestampUTC,
-		}
-		tPrevEnd = time.Now()
-	}
-
-	Log.Printf(" -- pullPubsubUntilWedge %d clean exit", id)
-	return
-}
-
-// }}}
-// {{{ pushAirspaceToMemcache
-
-var tLastMemcache = time.Now()
-var memcacheMutex = sync.Mutex{}
-
-func pushAirspaceToMemcache(ctx context.Context, as *airspace.Airspace) {
-	memcacheMutex.Lock()
-	defer memcacheMutex.Unlock()
-
-	if time.Since(tLastMemcache) < 500 * time.Millisecond { return }
-
-	// Take from airspace/memcache:JustAircraftToMemcache, and goroutinzed
-	justAircraft := airspace.Airspace{Aircraft: as.Aircraft}
-	if b,err := justAircraft.ToBytes(); err == nil {
-		go func(){
-			tStart := time.Now()
-
-			if err := gaeutil.SaveSingletonToMemcache(ctx, "airspace", b); err != nil {
-				Log.Printf("main/JustAircraftToMemcache: err: %v", err)
-			} else {
-				vitalsRequestChan<- VitalsRequest{
-					Name: "_memcache",
-					I:(time.Since(tStart).Nanoseconds() / 1000000),
-				}
-			}
-		}()
-	}
-	
-	tLastMemcache = time.Now()
-}
-
-// }}}
-*/
 
 // {{{ -------------------------={ E N D }=----------------------------------
 
