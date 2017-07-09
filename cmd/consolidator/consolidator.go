@@ -367,13 +367,22 @@ func trackVitals() {
 	// }}}
 
 	tLastDump := time.Now()
-	
+	tLastCounts := time.Now()
+
 	for {
 		if weAreDone() { break }
 
 		if time.Since(tLastDump) > time.Minute * 5 {
 			Log.Printf("vital dump:-\n%s", vitals2str())
 			tLastDump = time.Now()
+		}
+
+		if time.Since(tLastCounts) > 5 * time.Second {
+			Log.Printf("* memstats  %s\n", memStats())
+			Log.Printf("* Trackbuffer: %d msgs, Airspace: %d sigs, %d aircraft\n",
+				counters["TrackbufferSize"], counters["AirspaceSigCount"],
+				counters["AirspaceAircraftCount"])
+			tLastCounts = time.Now()
 		}
 
 		select {
