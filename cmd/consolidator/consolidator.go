@@ -250,6 +250,7 @@ func maybePostAirspace(ctx context.Context, as *airspace.Airspace) {
 
 	justAircraft := airspace.Airspace{Aircraft: as.Aircraft}
 	if b,err := justAircraft.ToBytes(); err == nil {
+/*
 		go func(){
 			tStart := time.Now()
 
@@ -264,6 +265,7 @@ func maybePostAirspace(ctx context.Context, as *airspace.Airspace) {
 				}
 			}
 		}()
+*/
 	}
 	
 	tLastMemcache = time.Now()
@@ -276,9 +278,6 @@ func maybePostAirspace(ctx context.Context, as *airspace.Airspace) {
 // These two channels are accessible from all goroutines
 var vitalsRequestChan = make(chan VitalsRequest, 40)
 var vitalsResponseChan = make(chan VitalsResponse, 5)  // Only used for stats output
-
-var nCallbackStarts = 0
-var nCallbackEnds = 0
 
 type VitalsRequest struct {
 	Name             string  // _blah
