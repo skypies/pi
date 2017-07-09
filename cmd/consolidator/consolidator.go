@@ -438,9 +438,6 @@ var nReceiveCallbacks = 0
 func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 	ctx, ctxCancelFunc := context.WithCancel(getContext())
 
-	as := airspace.Airspace{}
-	as.RollWhenThisMany = 5000                      // Dedupe set consists of 1-2x this number
-
 	setupPubsub()
 	Log.Printf("(pullNewFromPubsub starting)\n")	
 
@@ -448,15 +445,6 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 	sub := pc.Subscription(fPubsubSubscription)
 
 	sub.ReceiveSettings.MaxOutstandingMessages = 10 // put a limit on how many we juggle
-
-/*
-	if fOnAppEngine {
-		if err := as.EverythingFromMemcache(ctx); err != nil {
-			Log.Printf("airspace.EverythingFromMemcache: %v", err)
-			as = airspace.Airspace{}
-		}
-	}
-*/
 
 	var mu = &sync.Mutex{}
 	
@@ -499,16 +487,9 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 
 	ctxCancelFunc() // terminates call to sub.Receive()
 
-	if fOnAppEngine {
-/*
-		// We're shutting down, so save all the deduping signatures
-		if err := as.EverythingToMemcache(ctx); err != nil {
-			Log.Printf(" -- pullNewFromPubsub clean exit; memcache: %v", err)
-		}
-*/
-	} else {
+	if ! fOnAppEngine {
 		// We're not on AppEngine; clean up our wasteful subscription
-		ctx = getContext() // use a new context, prev has been canceled
+		ctx = getContext() // use a new context, the one above has been canceled
 		pc := mypubsub.NewClient(ctx, fProjectName)
 		if err := mypubsub.DeleteSub(ctx, pc, fPubsubSubscription); err != nil {
 			Log.Printf(" -- pullNewFromPubsub clean exit; del '%s': %v", fPubsubSubscription, err)
@@ -526,7 +507,8 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 // This goroutine owns the airspace object (which is not concurrent safe)
 func filterNewMessages(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*adsb.CompositeMsg) {
 	as := airspace.NewAirspace()
-	as.Signatures.RollAfter = 60 * time.Second // very aggressive, while we have probs
+	//as.Signatures.RollAfter = 10 * time.Second // very aggressive, while we have probs
+	as.RollWhenThisMany = 10000                // Dedupe set consists of 1-2x this number
 	
 	ctx := getContext()
 
@@ -563,6 +545,8 @@ func filterNewMessages(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*ads
 			}
 		}
 	}
+
+	// TODO - make `as.EverythingToMemcache(ctx)` work
 	
 	Log.Printf(" -- filterNewMessages clean exit\n")
 }
