@@ -250,7 +250,8 @@ func maybePostAirspace(ctx context.Context, as *airspace.Airspace) {
 
 	justAircraft := airspace.Airspace{Aircraft: as.Aircraft}
 	if b,err := justAircraft.ToBytes(); err == nil {
-/*
+		_=b
+		/*
 		go func(){
 			tStart := time.Now()
 
