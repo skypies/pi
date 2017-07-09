@@ -43,7 +43,7 @@ import (
 	"github.com/skypies/flightdb/fgae"
 	"github.com/skypies/pi/airspace"
 	"github.com/skypies/util/dsprovider"
-	"github.com/skypies/util/gaeutil"
+	//"github.com/skypies/util/gaeutil"
 	"github.com/skypies/util/histogram"
 	"github.com/skypies/util/metrics"
 	mypubsub "github.com/skypies/util/pubsub" // This is adding less value over time; kill ?
