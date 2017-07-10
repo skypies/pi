@@ -43,7 +43,7 @@ import (
 	"github.com/skypies/flightdb/fgae"
 	"github.com/skypies/pi/airspace"
 	"github.com/skypies/util/dsprovider"
-	//"github.com/skypies/util/gaeutil"
+	"github.com/skypies/util/gaeutil"
 	"github.com/skypies/util/histogram"
 	"github.com/skypies/util/metrics"
 	mypubsub "github.com/skypies/util/pubsub" // This is adding less value over time; kill ?
@@ -240,6 +240,8 @@ func flushTrackToDatastore(myId int, p dsprovider.DatastoreProvider, msgs []*ads
 var tLastMemcache = time.Now()
 var memcacheMutex = sync.Mutex{}
 
+var junkMutex = sync.Mutex{}
+
 func maybePostAirspace(ctx context.Context, as *airspace.Airspace) {
 	if fAirspaceWebhook == "" { return }
 	
@@ -250,11 +252,12 @@ func maybePostAirspace(ctx context.Context, as *airspace.Airspace) {
 
 	justAircraft := airspace.Airspace{Aircraft: as.Aircraft}
 	if b,err := justAircraft.ToBytes(); err == nil {
-		_=b
-		/*
 		go func(){
 			tStart := time.Now()
-
+			junkMutex.Lock()
+			nMemcacheStarts++
+			junkMutex.Unlock()
+			
 			// There is no cloud API for memcache, so we have to update the entry indirectly, via
 			// a handler running in an appengine standard app.
 			if err := gaeutil.SaveSingletonToMemcacheURL("airspace", b, fAirspaceWebhook); err != nil {
@@ -265,8 +268,11 @@ func maybePostAirspace(ctx context.Context, as *airspace.Airspace) {
 					I:(time.Since(tStart).Nanoseconds() / 1000000),
 				}
 			}
+			junkMutex.Lock()
+			nMemcacheEnds++
+			junkMutex.Unlock()
 		}()
-*/
+
 	}
 	
 	tLastMemcache = time.Now()
@@ -279,6 +285,9 @@ func maybePostAirspace(ctx context.Context, as *airspace.Airspace) {
 // These two channels are accessible from all goroutines
 var vitalsRequestChan = make(chan VitalsRequest, 40)
 var vitalsResponseChan = make(chan VitalsResponse, 5)  // Only used for stats output
+
+var nMemcacheStarts int
+var nMemcacheEnds int
 
 type VitalsRequest struct {
 	Name             string  // _blah
@@ -303,8 +312,8 @@ func memStats() string {
 	ms := runtime.MemStats{}
 
 	runtime.ReadMemStats(&ms)
-	return fmt.Sprintf("go:% 5d(% 4d cb); heap:% 13d, % 13d; stack:% 13d",
-		runtime.NumGoroutine(), nReceiveCallbacks,
+	return fmt.Sprintf("go:% 5d(% 4d cb; %d/%d mc); heap:% 13d, % 13d; stack:% 13d",
+		runtime.NumGoroutine(), nReceiveCallbacks, nMemcacheStarts, nMemcacheEnds,
 		ms.HeapObjects, ms.HeapAlloc, ms.StackInuse)
 }
 
