@@ -5,6 +5,7 @@ package realtime
 
 import (
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"strings"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/skypies/flightdb/ref"
 	"github.com/skypies/flightdb/fr24"
+	"github.com/skypies/flightdb/aex"
 )
 
 var(
@@ -45,12 +47,15 @@ func AirspaceHandler(w http.ResponseWriter, r *http.Request, templates *template
 	}
 
 	url := "http://fdb.serfr1.org/?json=1"
-	if r.FormValue("comp") != "" {
-		url += "&comp=1"
+	// Propagate certain URL args to the JSON handler
+	for _,key := range []string{"comp","fr24","fa"} {
+		if r.FormValue(key) != "" {
+			url += fmt.Sprintf("&%s=%s", key, r.FormValue(key))
+		}
 	}
 
 	var params = map[string]interface{}{
-		"MapsAPIKey": "",
+		"MapsAPIKey": "", //"AIzaSyDZd-t_YjSNGKmtmh6eR4Bt6eRR_w72b18",
 		"Center": sfo.KFixes["YADUT"],
 		"Zoom": 9,
 		"URLToPoll": url,
@@ -66,14 +71,32 @@ func AirspaceHandler(w http.ResponseWriter, r *http.Request, templates *template
 
 func jsonOutputHandler(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)	
-	as,err := getAirspaceForDisplay(c, geo.FormValueLatlongBox(r, "box"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	box := geo.FormValueLatlongBox(r, "box")
+	src := r.FormValue("src")
+
+	if box.IsNil() { box = sfo.KAirports["KSFO"].Box(250,250) }
+	
+	as := airspace.NewAirspace()
+	var err error
+
+	if src == "" || src == "fdb" {
+		as,err = getAirspaceForDisplay(c, box)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+	} else if src == "aex" {
+		addAExToAirspace(c, box, &as)
+
+	} else {
+		http.Error(w, fmt.Sprintf("airspace source '%s' not in {fdb,aex}"), http.StatusBadRequest)
 		return
-	}
+	}	
 
 	if r.FormValue("comp") != "" {
-		addFr24ToAirspace(c, &as)
+		addAExToAirspace(c, box, &as)
+		if r.FormValue("fr24") != "" { addFr24ToAirspace(c, &as) }
 		//if r.FormValue("fa") != "" { faToAirspace(c, &as) }
 
 		// Weed out stale stuff (mostly from fa)
@@ -94,12 +117,42 @@ func jsonOutputHandler(w http.ResponseWriter, r *http.Request) {
 
 	data,err := json.MarshalIndent(as, "", "  ")
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("jOH/Marshal error: %s", err.Error()), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(data)
+}
+
+// }}}
+
+// {{{ BackfillReferenceData
+
+func BackfillReferenceData(ctx context.Context, as *airspace.Airspace) {
+
+	airframes := ref.NewAirframeCache(ctx)
+	schedules := ref.NewScheduleCache(ctx)
+
+	for k,aircraft := range as.Aircraft {
+		// Need the bare Icao for lookups
+		unprefixedK := strings.TrimPrefix(string(k), "QQ")
+		unprefixedK = strings.TrimPrefix(unprefixedK, "EE")
+		unprefixedK = strings.TrimPrefix(unprefixedK, "FF")
+
+		if af := airframes.Get(unprefixedK); af != nil {
+			// Update entry in map to include the airframe data we just found
+			aircraft.Airframe = *af
+			as.Aircraft[k] = aircraft
+		}
+
+		if schedules != nil && time.Since(schedules.LastUpdated) < kMaxStaleScheduleDuration {
+			if fs := schedules.Get(unprefixedK); fs != nil {
+				aircraft.Schedule = fs.Identity.Schedule
+				as.Aircraft[k] = aircraft
+			}
+		}
+	}
 }
 
 // }}}
@@ -110,11 +163,9 @@ func jsonOutputHandler(w http.ResponseWriter, r *http.Request) {
 func getAirspaceForDisplay(c context.Context, bbox geo.LatlongBox) (airspace.Airspace, error) {
 	a := airspace.NewAirspace()
 	if err := a.JustAircraftFromMemcache(c); err != nil {
-		return a,err
+		return a, fmt.Errorf("gAFD/FromMemcache error:%v", err)
 	}
-
-	airframes := ref.NewAirframeCache(c)
-	schedules := ref.NewScheduleCache(c)
+	
 	for k,aircraft := range a.Aircraft {
 		age := time.Since(a.Aircraft[k].Msg.GeneratedTimestampUTC)
 		if age > kMaxStaleDuration {
@@ -125,20 +176,10 @@ func getAirspaceForDisplay(c context.Context, bbox geo.LatlongBox) (airspace.Air
 			delete(a.Aircraft, k)
 			continue
 		}
-		if af := airframes.Get(string(k)); af != nil {
-			// Update entry in map to include the airframe data we just found
-			aircraft.Airframe = *af
-			a.Aircraft[k] = aircraft
-		}
-
-		if schedules != nil && time.Since(schedules.LastUpdated) < kMaxStaleScheduleDuration {
-			if fs := schedules.Get(string(k)); fs != nil {
-				aircraft.Schedule = fs.Identity.Schedule
-				a.Aircraft[k] = aircraft
-			}
-		}
 	}
 
+	BackfillReferenceData(c, &a)
+	
 	return a,nil
 }
 
@@ -180,6 +221,24 @@ func faToAirspace(c context.Context, as *airspace.Airspace) string {
 	myFa.Init()
 }
 */
+}
+
+// }}}
+// {{{ addAExAirspace
+
+func addAExToAirspace(ctx context.Context, box geo.LatlongBox, as *airspace.Airspace) {	
+	if asAEx,err := aex.FetchAirspace(urlfetch.Client(ctx), box); err != nil {
+		return
+	} else {
+		BackfillReferenceData(ctx, asAEx)
+
+		for k,ad := range asAEx.Aircraft {
+			newk := string(k)
+			newk = "QQ" + strings.TrimPrefix(newk, "QQ") // Remove (if present), then re-add
+			ad.Airframe.Icao24 = newk
+			as.Aircraft[adsb.IcaoId(newk)] = ad
+		}
+	}
 }
 
 // }}}

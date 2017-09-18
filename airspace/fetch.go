@@ -9,12 +9,13 @@ import(
 )
 
 // For clients, fetching from a pi/frontend via JSON
-func Fetch(client *http.Client, host string, bbox geo.LatlongBox) (*Airspace, error) {
+func Fetch(client *http.Client, host string, src string, bbox geo.LatlongBox) (*Airspace, error) {
 	as := Airspace{}
 	if host == "" { host = "fdb.serfr1.org" }
+	if src == "" { src = "fdb" }
 
-	url := fmt.Sprintf("http://%s/?json=1&%s", host, bbox.ToCGIArgs("box"))
-	
+	url := fmt.Sprintf("http://%s/?json=1&src=%s&%s", host, src, bbox.ToCGIArgs("box"))
+
 	if resp,err := client.Get(url); err != nil {
 		return nil, err
 	} else if resp.StatusCode != http.StatusOK {
@@ -25,5 +26,3 @@ func Fetch(client *http.Client, host string, bbox geo.LatlongBox) (*Airspace, er
 
 	return &as, nil
 }
-
-// }}}

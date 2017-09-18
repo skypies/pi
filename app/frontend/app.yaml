@@ -1,11 +1,10 @@
 # DO NOT DEPLOY THIS APP
-# If you are deploying flightdb/ui, as it already does everything.
-# Only deploy this app if you want a realtime maps view without
-# any flightdb stuff.
+# You should be  deploying flightdb/app/frontend, as it already
+# does everything. Only deploy this app if you want a realtime
+# maps view without any flightdb stuff.
+do_not_deploy_this_app: deploy_flightdb_app_frontend_instead
 
-application: serfr0-fdb
-module: pifrontend
-version: one
+service: pifrontend
 runtime: go
 api_version: go1
 instance_class: F1

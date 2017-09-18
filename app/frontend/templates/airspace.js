@@ -82,22 +82,30 @@ function PaintAircraft(a) {
     var zDepth = 3000;
     if (a.Source == "fr24") { zDepth = 2000 }
 
+    var opacity = 0.8
     var color = "#0033ff"; // Default: SkyPi/ADSB color
+    if (a.X_DataSystem == "MLAT") {
+        color = "#508aff";
+    }
+
     if (a.Source == "fr24") {
+        color = "#00ff33";
         if (a.X_DataSystem == "T-F5M") {
             color = "#44ff22";
-        } else {
-            color = "#00ff33";
         }
+
     } else if (a.Source == "fa") {
         color = "#ff3300";
-    } else {
+
+    } else if (a.Source == "AdsbExchange") {
+        color = "#cc0066";
         if (a.X_DataSystem == "MLAT") {
-            color = "#508aff";
+            color = "#ff33ff";
         }
     }
 
     var newicon = arrowicon(color, a.Msg.Track);
+    newicon.strokeOpacity = opacity
     var newpos = new google.maps.LatLng(a.Msg.Position.Lat, a.Msg.Position.Long);
     var oldmarker = gAircraft[a.Icao24]
     if (!oldmarker) {
