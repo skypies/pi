@@ -27,6 +27,10 @@ function ClassBOverlay() {
 
 // Small subset; use these unless we're presented with a .Waypoint var.
 var waypoints = {
+    // SERFR3 (provisional changes)
+    "NARWL-SERFR3": {pos:{lat: 37.2747806 , lng:  -122.0792944}},
+    "EDDYY-SERFR3": {pos:{lat: 37.3749028 , lng:  -122.1187500}},
+
     // SERFR2
     "SERFR": {pos:{lat: 36.0683056 , lng:  -121.3646639}},
     "NRRLI": {pos:{lat: 36.4956000 , lng:  -121.6994000}},
@@ -97,11 +101,12 @@ function PathsOverlay() {
     var WWAVS1 = ["WWAVS", "WPOUT", "THEEZ", "WESLA", "MVRKK"];
     var BRIXX1 = ["LUYTA", "JILNA", "YADUT"];
     var BSR2   = ["CARME", "ANJEE", "SKUNK", "BOLDR", "MENLO"];
-
+    //var SERFR3 = ["SERFR", "NRRLI", "WWAVS", "EPICK", "NARWL-SERFR3", "EDDYY-SERFR3"];
     drawPath(SERFR2, '#990099')
     drawPath(WWAVS1, '#990099')
     drawPath(BRIXX1, '#990099')
     drawPath(BSR2,   '#007788')
+    //drawPath(SERFR3, '#44bb22') // overlays SERFR too closely
 }
 
 function drawPath(fixes, color) {
