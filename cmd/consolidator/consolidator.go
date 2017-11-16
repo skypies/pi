@@ -480,6 +480,11 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 			return
 		}
 
+		// We're blacklisting CulverCity, to see if that's the problem
+		if msgs[0].ReceiverName == "CulverCity" {
+			return
+		}
+		
 		msgsOut <- msgs
 
 		// Update our vital stats, with info about this bundle
