@@ -16,5 +16,8 @@ docker-image: consolidator
 	cp ${AUTHJSON} ./build
 	docker build -t consolidator -f ./build/Dockerfile .
 
+# Next ... publish to gcr.io
+# https://cloud.google.com/container-registry/docs/pushing-and-pulling
+
 skypi:
 	GOOS=linux GOARCH=arm go build -o skypi.arm cmd/skypi/skypi.go

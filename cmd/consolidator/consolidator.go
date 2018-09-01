@@ -16,6 +16,27 @@
 //   $ go run consolidator.go -ae=false -input=testing    [attaches to a testing topic]
 //   $ go run consolidator.go -ae=false                   [prod topic, but with new subscription]
 
+////////
+
+// This app doesn't use any appengine anything, any more. Yay !
+// Instead of deploying in appengine flex, deploy as a container onto a micro VM.
+
+// To test, using a clone of the prod pubsub inputs and not touching datastore:
+//   $ go run consolidator.go                [prod topic, but with now subscription]
+//   $ go run consolidator.go -input=testing [attaches to a testing topic]
+
+// To run in full prod mode:
+//   $ go run consolidator.go -dryrun=false
+
+// TODO
+// 1. test this binary a bit
+// 2. figure out how to publish the container to gcr.io [and add to makefile]
+// 3. how to have the container do dry-run or prod ?
+// 3. play with a GCE instance, using the 'run a container' setting; get equiv glcoud syntax
+// 4. document in README how to spin up the GCE instance; aim for something that gets as
+//     simple as glcoud deploy
+
+
 package main
 
 // {{{ import()
@@ -57,10 +78,11 @@ var (
 	fProjectName           string
 	fPubsubInputTopic      string
 	fPubsubSubscription    string
-	fOnAppEngine           bool
 	fAirspaceWebhook       string
 	fVerbosity             int
-	
+
+	fDryrunMode            bool
+
 	tGlobalStart           time.Time
 	stackTraceBytes      []byte
 
@@ -82,7 +104,9 @@ func init() {
 		"Name of the pubsub subscription on the adsb-inbound topic")
 	flag.StringVar(&fAirspaceWebhook, "hook-airspace", "fdb.serfr1.org/fdb/memcachesingleton",
 		"URL to publish airspace updates to")
-	flag.BoolVar(&fOnAppEngine, "ae", true, "whether on appengine (can use http://metadata/ etc)")
+
+	flag.BoolVar(&fDryrunMode, "dryrun", true, "use prod pubsub & datastore")
+
 	flag.IntVar(&fVerbosity, "v", 0, "verbosity level")
 	flag.Parse()
 
@@ -108,7 +132,7 @@ func setupPubsub() {
 	ctx := getContext()
 	pc := mypubsub.NewClient(ctx, fProjectName)
 
-	if fOnAppEngine {
+	if !fDryrunMode {
 		mypubsub.Setup(ctx, pc, fPubsubInputTopic, fPubsubSubscription)
 	} else {
 		fPubsubSubscription += "-DEV"
@@ -200,18 +224,13 @@ func addSIGINTHandler() {
 
 func getContext() context.Context {
 	return context.Background()
-/*
-	if fOnAppEngine {
-		return appengine.BackgroundContext()
-	}
-	return context.TODO()*/
 }
 
 // }}}
 // {{{ flushTrackToDatastore
 
 func flushTrackToDatastore(myId int, p dsprovider.DatastoreProvider, msgs []*adsb.CompositeMsg) {
-	if ! fOnAppEngine {
+	if fDryrunMode {
 		//Log.Printf(" -- (%d pushed for %s)\n", len(msgs), string(msgs[0].Icao24))
 		vitalsRequestChan<- VitalsRequest{Name: "_dbwrite", J:int64(myId)}
 		return
@@ -219,8 +238,7 @@ func flushTrackToDatastore(myId int, p dsprovider.DatastoreProvider, msgs []*ads
 
 	tStart := time.Now()
 
-	db := fgae.NewDB(getContext())
-	db.Backend = p
+	db := fgae.NewDB(getContext(), p)
 
 	frag := fdb.MessagesToTrackFragment(msgs)
 	if err := db.AddTrackFragment(frag); err != nil {
@@ -510,7 +528,7 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 
 	ctxCancelFunc() // terminates call to sub.Receive()
 
-	if ! fOnAppEngine {
+	if fDryrunMode {
 		// We're not on AppEngine; clean up our wasteful subscription
 		ctx = getContext() // use a new context, the one above has been canceled
 		pc := mypubsub.NewClient(ctx, fProjectName)
@@ -663,7 +681,7 @@ func main() {
 	if err != nil { Log.Fatal(err) }
 
 	nWorkers := 256 // avoid getting backed up on DB writes
-	if !fOnAppEngine { nWorkers = 16 }
+	if fDryrunMode { nWorkers = 16 } // Do we need this ?
 	for i:=0; i<nWorkers; i++ {
 		workerChan := make(chan []*adsb.CompositeMsg, 3)
 		workerChans = append(workerChans, workerChan)
