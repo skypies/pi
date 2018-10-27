@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	
-	"golang.org/x/net/context"
+	"context"
 	"google.golang.org/appengine/memcache"
 
 	"github.com/skypies/util/gaeutil"
