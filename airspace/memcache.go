@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"encoding/gob"
 	
-	"context"
+	"golang.org/x/net/context"
 	"google.golang.org/appengine/memcache"
 
-	"github.com/skypies/util/gaeutil"
+	"github.com/skypies/util/ae"
 )
 
 // {{{ a.ToBytes
@@ -40,14 +40,14 @@ func (a *Airspace)JustAircraftToMemcache(c context.Context) error {
 	b,err := aJustAircraft.ToBytes()
 	if err != nil { return err }
 
-	return gaeutil.SaveSingletonToMemcache(c, "airspace", b)
+	return ae.SaveSingletonToMemcache(c, "airspace", b)
 }
 
 // }}}
 // {{{ a.JustAircraftFromMemcache
 
 func (a *Airspace) JustAircraftFromMemcache(c context.Context) error {
-	if b,err := gaeutil.LoadSingletonFromMemcache(c, "airspace"); err == nil {
+	if b,err := ae.LoadSingletonFromMemcache(c, "airspace"); err == nil {
 		if err := a.FromBytes(b); err != nil {
 			return err
 		}
@@ -66,14 +66,14 @@ func (a *Airspace)EverythingToMemcache(c context.Context) error {
 	b,err := a.ToBytes()
 	if err != nil { return err }
 
-	return gaeutil.SaveShardedSingletonToMemcache(c, "deduping-signatures", b)
+	return ae.SaveShardedSingletonToMemcache(c, "deduping-signatures", b)
 }
 
 // }}}
 // {{{ a.EverythingFromMemcache
 
 func (a *Airspace)EverythingFromMemcache(c context.Context) error {
-	if b,err := gaeutil.LoadShardedSingletonFromMemcache(c, "deduping-signatures"); err == nil {
+	if b,err := ae.LoadShardedSingletonFromMemcache(c, "deduping-signatures"); err == nil {
 		if err := a.FromBytes(b); err != nil {
 			return err
 		}

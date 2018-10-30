@@ -56,15 +56,15 @@ import (
 
 	"cloud.google.com/go/pubsub"
 	
-	"context"
+	"golang.org/x/net/context"
 
 	"github.com/skypies/adsb"
 	"github.com/skypies/adsb/trackbuffer"
 	fdb "github.com/skypies/flightdb"
 	"github.com/skypies/flightdb/fgae"
 	"github.com/skypies/pi/airspace"
+	"github.com/skypies/util/ae"
 	"github.com/skypies/util/dsprovider"
-	"github.com/skypies/util/gaeutil"
 	"github.com/skypies/util/histogram"
 	"github.com/skypies/util/metrics"
 	mypubsub "github.com/skypies/util/pubsub" // This is adding less value over time; kill ?
@@ -278,7 +278,7 @@ func maybePostAirspace(ctx context.Context, as *airspace.Airspace) {
 			
 			// There is no cloud API for memcache, so we have to update the entry indirectly, via
 			// a handler running in an appengine standard app.
-			if err := gaeutil.SaveSingletonToMemcacheURL("airspace", b, fAirspaceWebhook); err != nil {
+			if err := ae.SaveSingletonToMemcacheURL("airspace", b, fAirspaceWebhook); err != nil {
 				Log.Printf("main/maybePostAirspace(%s): err: %v", fAirspaceWebhook, err)
 			} else {
 				vitalsRequestChan<- VitalsRequest{
