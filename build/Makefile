@@ -21,3 +21,7 @@ docker-image: consolidator
 
 skypi:
 	GOOS=linux GOARCH=arm go build -o skypi.arm cmd/skypi/skypi.go
+
+
+publish: consolidator
+	scp build/consolidator adam@35.239.5.96:~/consolidator-new

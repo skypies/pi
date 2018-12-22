@@ -1,41 +1,26 @@
-// The consolidator program subscribes to a topic on Google Cloud Pubsub, and reads bundles of
-// composite ADSB messages from it. These are deduped, and unique ones are published to a
-// different topic. A snapshot is written to memcache twice a second, for other apps to access.
+// The consolidator program subscribes to a topic on Google Cloud
+// Pubsub, and reads bundles of composite ADSB messages from it. These
+// are deduped, and unique ones are published to a different topic.
+// Updates are written to a flight database. A snapshot is written to
+// memcache twice a second, for other apps to access.
 
-// It should be deployed as an AppEngine Flexible App, as per the app.yaml file:
-//   $ gcloud app deploy
-
-// If data is written to datastore, you may need to deploy some datastore indices, too:
-//   $ gcloud app deploy ./index.yaml --promote
-
-// When running in the cloud, these oneliners might be handy:
-//   $ gcloud app logs read -s consolidator
+// Handy oneliners:
 //   $ curl -s fdb.serfr1.org/con/stack | pp -force-color -parse=false -aggressive
 
-// You can it also run it locally with the appengine=false flag:
-//   $ go run consolidator.go -ae=false -input=testing    [attaches to a testing topic]
-//   $ go run consolidator.go -ae=false                   [prod topic, but with new subscription]
-
-////////
-
-// This app doesn't use any appengine anything, any more. Yay !
-// Instead of deploying in appengine flex, deploy as a container onto a micro VM.
-
 // To test, using a clone of the prod pubsub inputs and not touching datastore:
+//   $ export GOOGLE_APPLICATION_CREDENTIALS=~/something.json
 //   $ go run consolidator.go                [prod topic, but with now subscription]
 //   $ go run consolidator.go -input=testing [attaches to a testing topic]
 
-// To run in full prod mode:
+// To run in full prod mode, deploy to a micro VM, and then:
 //   $ go run consolidator.go -dryrun=false
 
 // TODO
 // 1. test this binary a bit
-// 2. figure out how to publish the container to gcr.io [and add to makefile]
-// 3. how to have the container do dry-run or prod ?
+// 2. figure out whether containerizing is worthwhile
 // 3. play with a GCE instance, using the 'run a container' setting; get equiv glcoud syntax
 // 4. document in README how to spin up the GCE instance; aim for something that gets as
 //     simple as glcoud deploy
-
 
 package main
 
@@ -62,12 +47,13 @@ import (
 	"github.com/skypies/adsb/trackbuffer"
 	fdb "github.com/skypies/flightdb"
 	"github.com/skypies/flightdb/fgae"
+	"github.com/skypies/flightdb/ref"
 	"github.com/skypies/pi/airspace"
 	"github.com/skypies/util/ae"
-	"github.com/skypies/util/dsprovider"
+	dsprovider "github.com/skypies/util/gcp/ds"
 	"github.com/skypies/util/histogram"
 	"github.com/skypies/util/metrics"
-	mypubsub "github.com/skypies/util/pubsub" // This is adding less value over time; kill ?
+	mypubsub "github.com/skypies/util/gcp/pubsub" // This is adding less value over time; kill ?
 )
 
 // }}}
@@ -87,6 +73,10 @@ var (
 	stackTraceBytes      []byte
 
 	Log                   *log.Logger
+
+	// These globals are updated from time to time
+	airframeRefdata       *ref.AirframeCache
+	scheduleRefdata       *ref.ScheduleCache
 )
 
 // }}}
@@ -105,7 +95,7 @@ func init() {
 	flag.StringVar(&fAirspaceWebhook, "hook-airspace", "fdb.serfr1.org/fdb/memcachesingleton",
 		"URL to publish airspace updates to")
 
-	flag.BoolVar(&fDryrunMode, "dryrun", true, "use prod pubsub & datastore")
+	flag.BoolVar(&fDryrunMode, "dryrun", true, "else uses prod pubsub & datastore")
 
 	flag.IntVar(&fVerbosity, "v", 0, "verbosity level")
 	flag.Parse()
@@ -238,10 +228,10 @@ func flushTrackToDatastore(myId int, p dsprovider.DatastoreProvider, msgs []*ads
 
 	tStart := time.Now()
 
-	db := fgae.NewDB(getContext(), p)
+	db := fgae.New(getContext(), p)
 
 	frag := fdb.MessagesToTrackFragment(msgs)
-	if err := db.AddTrackFragment(frag); err != nil {
+	if err := db.AddTrackFragment(frag, airframeRefdata, scheduleRefdata); err != nil {
 		Log.Printf("flushPost/ToDatastore: err: %v\n--\n", err)
 	}
 
@@ -298,6 +288,44 @@ func maybePostAirspace(ctx context.Context, as *airspace.Airspace) {
 
 // }}}
 
+// {{{ cacheRefdata
+
+func cacheRefdata(p dsprovider.DatastoreProvider) {
+	ctx := getContext()
+	db := fgae.New(ctx, p)
+	sp := db.SingletonProvider
+
+	pollInterval := time.Second * 30
+	lastPoll := time.Now().Add(-10 * pollInterval)
+	
+	for {
+		if weAreDone() { break }
+
+		if time.Since(lastPoll) > pollInterval {
+			if newAirframes,err := ref.LoadAirframeCache(ctx,sp); err != nil {
+				Log.Printf("LoadAirframeCache err: %v\n", err)
+			} else {
+				airframeRefdata = newAirframes
+			}
+			if newSchedules,err := ref.LoadScheduleCache(ctx,sp); err != nil {
+				Log.Printf("LoadScheduleCache err: %v\n", err)
+			} else {
+				scheduleRefdata = newSchedules
+			}
+
+			Log.Printf("-- cacheRefdata polling (every %s), loaded %d airframes, %d schedules",
+				pollInterval, len(airframeRefdata.Map), len(scheduleRefdata.Map))
+
+			lastPoll = time.Now()
+		}
+
+		time.Sleep(time.Second)
+	}
+
+	Log.Printf(" -- cacheRefdata clean exit\n")
+}
+
+// }}}
 // {{{ trackVitals
 
 // These two channels are accessible from all goroutines
@@ -487,10 +515,18 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 	// sub.Receive invokes concurrent instances of this callback; we funnel their
 	// (unpacked) responses back into the msgsOut channel, for the processing pipeline to eat
 	callback := func(ctx context.Context, m *pubsub.Message) {
+
+		// I'm not entirely sure we need to count how many callbacks are running ...
 		mu.Lock()
 		nReceiveCallbacks++
 		mu.Unlock()
 
+		defer func() {
+			mu.Lock()
+			nReceiveCallbacks--
+			mu.Unlock()
+		}()
+		
 		m.Ack()
 		msgs,err := mypubsub.UnpackPubsubMessage(m)
 		if err != nil {
@@ -670,15 +706,15 @@ func flushTracks(myId int, p dsprovider.DatastoreProvider, msgsIn <-chan []*adsb
 
 func main() {
 	Log.Printf("(main starting)\n")
-	
+
+	// The cloud provider's client leaks goroutines, so just use one client forever
+	db,err := dsprovider.NewCloudDSProvider(getContext(), fProjectName)
+	if err != nil { Log.Fatal(err) }
+
 	msgChan1 := make(chan []*adsb.CompositeMsg, 3)
 	msgChan2 := make(chan []*adsb.CompositeMsg, 3)
 	msgChan3 := make(chan []*adsb.CompositeMsg, 3)
 	workerChans := []chan []*adsb.CompositeMsg{}
-
-	// The cloud provider's client leaks goroutines, so just use one forever
-	db,err := dsprovider.NewCloudDSProvider(getContext(), fProjectName)
-	if err != nil { Log.Fatal(err) }
 
 	nWorkers := 256 // avoid getting backed up on DB writes
 	if fDryrunMode { nWorkers = 16 } // Do we need this ?
@@ -693,9 +729,9 @@ func main() {
 	go bufferTracks(msgChan2, msgChan3)      // ... sorts msgs into per-flight frags, into chan3 ...
 	go workerDispatch(msgChan3, workerChans) // ... takes a per-flight frag, shards over workerChans
 
-	// Manage vital statistics in a thread safe way
-	go trackVitals()
-	
+	go trackVitals()    // Manage vital statistics via global channels
+	go cacheRefdata(db) // Cache some refdata
+
 	go func(){ Log.Fatal(http.ListenAndServe(":8080", nil)) }()
 
 	// Block until done channel lights up
