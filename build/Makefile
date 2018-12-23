@@ -25,3 +25,12 @@ skypi:
 
 publish: consolidator
 	scp build/consolidator adam@35.239.5.96:~/consolidator-new
+
+publishbig: consolidator
+	scp build/consolidator adam@35.238.81.117:~/consolidator-new
+
+publish4: consolidator
+	scp build/consolidator adam@35.232.131.31:~/consolidator-new
+
+publishhuge: consolidator
+	scp build/consolidator adam@35.224.155.70:~/consolidator-new

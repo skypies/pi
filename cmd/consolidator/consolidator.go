@@ -12,15 +12,12 @@
 //   $ go run consolidator.go                [prod topic, but with now subscription]
 //   $ go run consolidator.go -input=testing [attaches to a testing topic]
 
-// To run in full prod mode, deploy to a micro VM, and then:
+// To run in full prod mode, upload to a micro VM (that has full cloud API access), and then:
 //   $ go run consolidator.go -dryrun=false
 
-// TODO
-// 1. test this binary a bit
-// 2. figure out whether containerizing is worthwhile
-// 3. play with a GCE instance, using the 'run a container' setting; get equiv glcoud syntax
-// 4. document in README how to spin up the GCE instance; aim for something that gets as
-//     simple as glcoud deploy
+// If there is a backlog to clear, consider a 4x vCPU machine size. This should clear
+//  at the rate of ~10K bundles/minute. The micro size will thrash if it tries this;
+//  it is only good for steady state, which is a few hundred bundles/minute.
 
 package main
 
@@ -66,6 +63,7 @@ var (
 	fPubsubSubscription    string
 	fAirspaceWebhook       string
 	fVerbosity             int
+	fDatabaseWorkers       int
 
 	fDryrunMode            bool
 
@@ -98,7 +96,11 @@ func init() {
 	flag.BoolVar(&fDryrunMode, "dryrun", true, "else uses prod pubsub & datastore")
 
 	flag.IntVar(&fVerbosity, "v", 0, "verbosity level")
+	flag.IntVar(&fDatabaseWorkers, "n", 256, "number of database workers")
+
 	flag.Parse()
+
+	if fDryrunMode { fDatabaseWorkers = 16 } // Do we need this ?
 
 	http.HandleFunc("/", statusHandler)
 	http.HandleFunc("/con/status", statusHandler)
@@ -227,18 +229,36 @@ func flushTrackToDatastore(myId int, p dsprovider.DatastoreProvider, msgs []*ads
 	}
 
 	tStart := time.Now()
+	perf := map[string]time.Time{}
 
 	db := fgae.New(getContext(), p)
 
 	frag := fdb.MessagesToTrackFragment(msgs)
-	if err := db.AddTrackFragment(frag, airframeRefdata, scheduleRefdata); err != nil {
+	if err := db.AddTrackFragment(frag, airframeRefdata, scheduleRefdata, perf); err != nil {
 		Log.Printf("flushPost/ToDatastore: err: %v\n--\n", err)
+	}
+
+	durMillis := func(s,e string) int64 {
+		return int64(perf[e].Sub(perf[s]).Nanoseconds() / 1000000)
+	}
+
+	wasNewEntity := 0
+	if _,exists := perf["03_notplausible"]; exists {
+		wasNewEntity = 1
 	}
 
 	vitalsRequestChan<- VitalsRequest{
 		Name: "_dbwrite",
 		I:(time.Since(tStart).Nanoseconds() / 1000000),
 		J:int64(myId),
+		// perf timings, in millis. Stages are: 01_start, 02_mostrecent,
+		// 03_plausible, 03_notplausible, 04_trackbuild, 05_waypoints, 06_persist
+		L:durMillis("01_start", "02_mostrecent"),
+		M:durMillis("02_mostrecent", "04_trackbuild"),
+		N:durMillis("04_trackbuild", "05_waypoints"),
+		O:durMillis("05_waypoints", "06_persist"),
+		// whether we created a new DS entity
+		P:int64(wasNewEntity),
 	}
 }
 
@@ -467,6 +487,16 @@ func trackVitals() {
 				m.RecordValue("DBWriteMillis", req.I)
 				workers[fmt.Sprintf("%03d",req.J)]++
 				counters["nFrags"]++
+
+				m.RecordValue("Z02_MostRecentMillis", req.L)
+				m.RecordValue("Z05_WaypointsMillis", req.N)
+				if req.P > 0 {
+					m.RecordValue("Z04_New_TrackbuildMillis", req.M)
+					m.RecordValue("Z06_New_PersistMillis", req.O)
+				} else {
+					m.RecordValue("Z04_Extend_TrackbuildMillis", req.M)
+					m.RecordValue("Z06_Extend_PersistMillis", req.O)
+				}
 
 			} else if req.Name == "_memcache" {
 				m.RecordValue("MemcacheMillis", req.I)
@@ -716,8 +746,8 @@ func main() {
 	msgChan3 := make(chan []*adsb.CompositeMsg, 3)
 	workerChans := []chan []*adsb.CompositeMsg{}
 
-	nWorkers := 256 // avoid getting backed up on DB writes
-	if fDryrunMode { nWorkers = 16 } // Do we need this ?
+	nWorkers := fDatabaseWorkers // avoid getting backed up on DB writes
+	Log.Printf("(spawning %d DB workers)\n", nWorkers)
 	for i:=0; i<nWorkers; i++ {
 		workerChan := make(chan []*adsb.CompositeMsg, 3)
 		workerChans = append(workerChans, workerChan)
