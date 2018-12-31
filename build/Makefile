@@ -22,15 +22,6 @@ docker-image: consolidator
 skypi:
 	GOOS=linux GOARCH=arm go build -o skypi.arm cmd/skypi/skypi.go
 
-
+DESTNAME=`TZ="America/Los_Angeles" date +"consolidator-%Y%m%d-%H%M"`
 publish: consolidator
-	scp build/consolidator adam@35.239.5.96:~/consolidator-new
-
-publishbig: consolidator
-	scp build/consolidator adam@35.238.81.117:~/consolidator-new
-
-publish4: consolidator
-	scp build/consolidator adam@35.232.131.31:~/consolidator-new
-
-publishhuge: consolidator
-	scp build/consolidator adam@35.224.155.70:~/consolidator-new
+	scp build/consolidator adam@35.239.5.96:~/${DESTNAME}

@@ -3,11 +3,14 @@ package airspace
 import (
 	"bytes"
 	"encoding/gob"
-	
+	"net"
+	"time"
+
 	"golang.org/x/net/context"
 	"google.golang.org/appengine/memcache"
 
 	"github.com/skypies/util/ae"
+	mcsingleton "github.com/skypies/util/singleton/memcache"
 )
 
 // {{{ a.ToBytes
@@ -56,6 +59,34 @@ func (a *Airspace) JustAircraftFromMemcache(c context.Context) error {
 	}
 
 	return nil
+}
+
+// }}}
+// {{{ a.JustAircraftFromMemcacheServer
+
+// This was intended for use from appengine, using a custom dialer from appengine/socket:
+//
+//   dialer := func(network, addr string, timeout time.Duration) (net.Conn, error) {
+//		  return socket.DialTimeout(c, network, addr, timeout)
+//	  }
+//
+// Then we could share a single memcache instance, running on a GCE instance, with
+// consolidator. Sadly there is no way for appengine to talk to GCE, without
+// exposing the memcached instance to the public internet. So this will all have to wait
+// until Google Cloud makes that possible.
+func (a *Airspace) JustAircraftFromMemcacheServer(ctx context.Context, dialer func(network, addr string, timeout time.Duration) (net.Conn, error)) error {
+	sp := mcsingleton.NewProvider("35.239.5.96:11211")
+	if dialer != nil {
+		sp.SetDialer(dialer)
+	}
+
+	err := sp.ReadSingleton(ctx, "consolidated-airspace", nil, a)
+
+	if err == memcache.ErrCacheMiss {
+		return nil
+	}
+
+	return err
 }
 
 // }}}

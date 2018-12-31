@@ -55,7 +55,7 @@ func AirspaceHandler(w http.ResponseWriter, r *http.Request, templates *template
 	}
 
 	var params = map[string]interface{}{
-		"MapsAPIKey": "", //"AIzaSyDZd-t_YjSNGKmtmh6eR4Bt6eRR_w72b18",
+		"MapsAPIKey": "AIzaSyBCNj05xH-7CAdVEXXSPpt2lGDmaynIOBU",
 		"Center": sfo.KFixes["YADUT"],
 		"Zoom": 9,
 		"URLToPoll": url,
@@ -162,6 +162,17 @@ func BackfillReferenceData(ctx context.Context, as *airspace.Airspace) {
 // We tart it up with airframe and schedule data, trim out stale entries, and trim to fit box
 func getAirspaceForDisplay(c context.Context, bbox geo.LatlongBox) (airspace.Airspace, error) {
 	a := airspace.NewAirspace()
+
+	// Must wait until GAE can securely call into GCE within the same project
+/*
+	dialer := func(network, addr string, timeout time.Duration) (net.Conn, error) {
+		return socket.DialTimeout(c, network, addr, timeout)
+	}
+	if err := a.JustAircraftFromMemcacheServer(c, dialer); err != nil {
+		return a, fmt.Errorf("gAFD/FromMemcache error:%v", err)
+	}
+*/
+
 	if err := a.JustAircraftFromMemcache(c); err != nil {
 		return a, fmt.Errorf("gAFD/FromMemcache error:%v", err)
 	}

@@ -50,6 +50,7 @@ import (
 	dsprovider "github.com/skypies/util/gcp/ds"
 	"github.com/skypies/util/histogram"
 	"github.com/skypies/util/metrics"
+	mcsingleton "github.com/skypies/util/singleton/memcache"
 	mypubsub "github.com/skypies/util/gcp/pubsub" // This is adding less value over time; kill ?
 )
 
@@ -62,6 +63,7 @@ var (
 	fPubsubInputTopic      string
 	fPubsubSubscription    string
 	fAirspaceWebhook       string
+	fMemcacheServer        string
 	fVerbosity             int
 	fDatabaseWorkers       int
 
@@ -92,11 +94,13 @@ func init() {
 		"Name of the pubsub subscription on the adsb-inbound topic")
 	flag.StringVar(&fAirspaceWebhook, "hook-airspace", "fdb.serfr1.org/fdb/memcachesingleton",
 		"URL to publish airspace updates to")
+	flag.StringVar(&fMemcacheServer, "memcache-server", "", // "localhost:11211",
+		"memcache server to post airspace to")
 
 	flag.BoolVar(&fDryrunMode, "dryrun", true, "else uses prod pubsub & datastore")
 
 	flag.IntVar(&fVerbosity, "v", 0, "verbosity level")
-	flag.IntVar(&fDatabaseWorkers, "n", 256, "number of database workers")
+	flag.IntVar(&fDatabaseWorkers, "n", 64, "number of database workers")
 
 	flag.Parse()
 
@@ -271,14 +275,22 @@ var memcacheMutex = sync.Mutex{}
 var junkMutex = sync.Mutex{}
 
 func maybePostAirspace(ctx context.Context, as *airspace.Airspace) {
-	if fAirspaceWebhook == "" { return }
-	
 	memcacheMutex.Lock()
 	defer memcacheMutex.Unlock()
 
 	if time.Since(tLastMemcache) < 500 * time.Millisecond { return }
 
 	justAircraft := airspace.Airspace{Aircraft: as.Aircraft}
+
+	if fMemcacheServer != "" {
+		sp := mcsingleton.NewProvider(fMemcacheServer)
+		if err := sp.WriteSingleton(ctx, "consolidated-airspace", nil, &justAircraft); err != nil {
+			Log.Printf("mc.WriteSingleton(airspace) err: %v\n", err)
+		}
+	}
+
+	if fAirspaceWebhook == "" { return }
+
 	if b,err := justAircraft.ToBytes(); err == nil {
 		go func(){
 			tStart := time.Now()
