@@ -1,4 +1,10 @@
 # cd ~/repo/skypies/pi
+# make -f build/Makefile publish
+
+#### BTW, I gave up on all the docker business; it's so much easier
+# to just deploy a single binary to the single server and run it
+# inside `screen`.
+#
 # make -f build/Makefile docker-image
 # docker run -p8080:8080 consolidator
 

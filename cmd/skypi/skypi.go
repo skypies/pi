@@ -25,7 +25,7 @@ import (
 
 	"github.com/skypies/adsb"
 	"github.com/skypies/adsb/msgbuffer"
-	"github.com/skypies/util/pubsub"
+	"github.com/skypies/util/gcp/pubsub"
 )
 
 var Log *log.Logger

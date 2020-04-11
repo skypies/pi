@@ -46,11 +46,10 @@ import (
 	"github.com/skypies/flightdb/fgae"
 	"github.com/skypies/flightdb/ref"
 	"github.com/skypies/pi/airspace"
-	"github.com/skypies/util/ae"
 	dsprovider "github.com/skypies/util/gcp/ds"
 	"github.com/skypies/util/histogram"
 	"github.com/skypies/util/metrics"
-	mcsingleton "github.com/skypies/util/singleton/memcache"
+	"github.com/skypies/util/gcp/singleton"
 	mypubsub "github.com/skypies/util/gcp/pubsub" // This is adding less value over time; kill ?
 )
 
@@ -62,8 +61,8 @@ var (
 	fProjectName           string
 	fPubsubInputTopic      string
 	fPubsubSubscription    string
-	fAirspaceWebhook       string
-	fMemcacheServer        string
+	// fAirspaceWebhook       string
+	// fMemcacheServer        string
 	fVerbosity             int
 	fDatabaseWorkers       int
 
@@ -92,10 +91,10 @@ func init() {
 		"Name of the pubsub topic we read from (i.e. add our subscription to)")
 	flag.StringVar(&fPubsubSubscription, "sub", "consolidator",
 		"Name of the pubsub subscription on the adsb-inbound topic")
-	flag.StringVar(&fAirspaceWebhook, "hook-airspace", "fdb.serfr1.org/fdb/memcachesingleton",
-		"URL to publish airspace updates to")
-	flag.StringVar(&fMemcacheServer, "memcache-server", "", // "localhost:11211",
-		"memcache server to post airspace to")
+	//flag.StringVar(&fAirspaceWebhook, "hook-airspace", "fdb.serfr1.org/fdb/memcachesingleton",
+	//	"URL to publish airspace updates to")
+	//flag.StringVar(&fMemcacheServer, "memcache-server", "", // "localhost:11211",
+	//	"memcache server to post airspace to *DISABLED JUNK FOR NOW*")
 
 	flag.BoolVar(&fDryrunMode, "dryrun", true, "else uses prod pubsub & datastore")
 
@@ -274,23 +273,40 @@ var memcacheMutex = sync.Mutex{}
 
 var junkMutex = sync.Mutex{}
 
-func maybePostAirspace(ctx context.Context, as *airspace.Airspace) {
+func maybePostAirspace(ctx context.Context, p dsprovider.DatastoreProvider, as *airspace.Airspace) {
 	memcacheMutex.Lock()
 	defer memcacheMutex.Unlock()
 
-	if time.Since(tLastMemcache) < 500 * time.Millisecond { return }
+	if time.Since(tLastMemcache) < 1000 * time.Millisecond { return }
 
 	justAircraft := airspace.Airspace{Aircraft: as.Aircraft}
 
+	// This stuff is broadly dead, until we figure out the networking to let Appengine apps
+	// access VMs.
+/*
 	if fMemcacheServer != "" {
 		sp := mcsingleton.NewProvider(fMemcacheServer)
 		if err := sp.WriteSingleton(ctx, "consolidated-airspace", nil, &justAircraft); err != nil {
 			Log.Printf("mc.WriteSingleton(airspace) err: %v\n", err)
 		}
 	}
+*/
+	// if fAirspaceWebhook == "" { return }
 
-	if fAirspaceWebhook == "" { return }
+	// Memcache is dead. Instead, publish to datastore.
+	// FIXME: should this spin off a goroutine ?
+	tStart := time.Now()
+	sp := singleton.NewProvider(p)
+	if err := sp.WriteSingleton(ctx, "consolidated-airspace", nil, &justAircraft); err != nil {
+		Log.Printf("mc.WriteSingleton(airspace) err: %v\n", err)
+	} else {
+		vitalsRequestChan<- VitalsRequest{
+			Name: "_memcache",
+			I:(time.Since(tStart).Nanoseconds() / 1000000),
+		}
+	}
 
+/*
 	if b,err := justAircraft.ToBytes(); err == nil {
 		go func(){
 			tStart := time.Now()
@@ -298,8 +314,6 @@ func maybePostAirspace(ctx context.Context, as *airspace.Airspace) {
 			nMemcacheStarts++
 			junkMutex.Unlock()
 			
-			// There is no cloud API for memcache, so we have to update the entry indirectly, via
-			// a handler running in an appengine standard app.
 			if err := ae.SaveSingletonToMemcacheURL("airspace", b, fAirspaceWebhook); err != nil {
 				Log.Printf("main/maybePostAirspace(%s): err: %v", fAirspaceWebhook, err)
 			} else {
@@ -314,6 +328,7 @@ func maybePostAirspace(ctx context.Context, as *airspace.Airspace) {
 		}()
 
 	}
+*/
 	
 	tLastMemcache = time.Now()
 }
@@ -624,7 +639,7 @@ func pullNewFromPubsub(msgsOut chan<- []*adsb.CompositeMsg) {
 
 // pubsub.Receiver's goroutines will send to the msgIns channel; we dedupe and send on
 // This goroutine owns the airspace object (which is not concurrent safe)
-func filterNewMessages(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*adsb.CompositeMsg) {
+func filterNewMessages(p dsprovider.DatastoreProvider, msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*adsb.CompositeMsg) {
 	as := airspace.NewAirspace()
 	//as.Signatures.RollAfter = 10 * time.Second // very aggressive, while we have probs
 	as.RollWhenThisMany = 10000                // Dedupe set consists of 1-2x this number
@@ -646,7 +661,7 @@ func filterNewMessages(msgsIn <-chan []*adsb.CompositeMsg, msgsOut chan<- []*ads
 				// Pass them to the other goroutine for dissemination, and get back to business.
 				msgsOut <- newMsgs
 
-				maybePostAirspace(ctx, &as)
+				maybePostAirspace(ctx, p, &as)
 
 				if fVerbosity > 0 {
 					Log.Printf("- %2d were new (%2d already seen) - %s",
@@ -767,7 +782,7 @@ func main() {
 	}
 
 	go pullNewFromPubsub(msgChan1)           // sends mixed bundles down chan1
-	go filterNewMessages(msgChan1, msgChan2) // ... dedupes them, into chan2 ...
+	go filterNewMessages(db, msgChan1, msgChan2) // ... dedupes them, into chan2 ...
 	go bufferTracks(msgChan2, msgChan3)      // ... sorts msgs into per-flight frags, into chan3 ...
 	go workerDispatch(msgChan3, workerChans) // ... takes a per-flight frag, shards over workerChans
 

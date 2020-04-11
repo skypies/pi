@@ -1,5 +1,7 @@
 package airspace
 
+/*
+
 import (
 	"bytes"
 	"encoding/gob"
@@ -7,7 +9,7 @@ import (
 	"time"
 
 	"golang.org/x/net/context"
-	"google.golang.org/appengine/memcache"
+	"google.golang.org/ appengine/memcache"
 
 	"github.com/skypies/util/ae"
 	mcsingleton "github.com/skypies/util/singleton/memcache"
@@ -116,7 +118,7 @@ func (a *Airspace)EverythingFromMemcache(c context.Context) error {
 }
 
 // }}}
-
+*/
 
 // {{{ -------------------------={ E N D }=----------------------------------
 

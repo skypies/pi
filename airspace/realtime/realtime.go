@@ -12,13 +12,16 @@ import (
 	"time"
 	
 	"golang.org/x/net/context"
-	"google.golang.org/appengine"
-	"google.golang.org/appengine/urlfetch"
+	// "google.golang.org/ appengine"
+	// "google.golang.org/ appengine/urlfetch"
 
 	"github.com/skypies/adsb"
 	"github.com/skypies/geo"
 	"github.com/skypies/geo/sfo"
 	"github.com/skypies/pi/airspace"
+
+	"github.com/skypies/util/gcp/ds"
+	"github.com/skypies/util/gcp/singleton"
 
 	"github.com/skypies/flightdb/ref"
 	"github.com/skypies/flightdb/fr24"
@@ -28,6 +31,8 @@ import (
 var(
 	kMaxStaleDuration = time.Second * 30
 	kMaxStaleScheduleDuration = time.Minute * 20
+	GoogleCloudProjectId = "serfr0-fdb"
+	airspaceSingletonName = "consolidated-airspace"
 )
 
 // {{{ AirspaceHandler
@@ -70,7 +75,7 @@ func AirspaceHandler(w http.ResponseWriter, r *http.Request, templates *template
 // {{{ jsonOutputHandler
 
 func jsonOutputHandler(w http.ResponseWriter, r *http.Request) {
-	c := appengine.NewContext(r)	
+	ctx := r.Context()
 	box := geo.FormValueLatlongBox(r, "box")
 	src := r.FormValue("src")
 
@@ -80,14 +85,14 @@ func jsonOutputHandler(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	if src == "" || src == "fdb" {
-		as,err = getAirspaceForDisplay(c, box)
+		as,err = getAirspaceForDisplay(ctx, box)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 	} else if src == "aex" {
-		addAExToAirspace(c, box, &as)
+		addAExToAirspace(ctx, box, &as)
 
 	} else {
 		http.Error(w, fmt.Sprintf("airspace source '%s' not in {fdb,aex}"), http.StatusBadRequest)
@@ -95,9 +100,9 @@ func jsonOutputHandler(w http.ResponseWriter, r *http.Request) {
 	}	
 
 	if r.FormValue("comp") != "" {
-		addAExToAirspace(c, box, &as)
-		if r.FormValue("fr24") != "" { addFr24ToAirspace(c, &as) }
-		//if r.FormValue("fa") != "" { faToAirspace(c, &as) }
+		addAExToAirspace(ctx, box, &as)
+		if r.FormValue("fr24") != "" { addFr24ToAirspace(ctx, &as) }
+		//if r.FormValue("fa") != "" { faToAirspace(ctx, &as) }
 
 		// Weed out stale stuff (mostly from fa)
 		for k,_ := range as.Aircraft {
@@ -129,11 +134,10 @@ func jsonOutputHandler(w http.ResponseWriter, r *http.Request) {
 
 // {{{ BackfillReferenceData
 
-func BackfillReferenceData(ctx context.Context, as *airspace.Airspace) {
-
-	airframes := ref.NewAirframeCache(ctx)
-	schedules := ref.NewScheduleCache(ctx)
-
+func BackfillReferenceData(ctx context.Context, sp singleton.SingletonProvider, as *airspace.Airspace) {
+	airframes,_ := ref.LoadAirframeCache(ctx, sp)
+	schedules,_ := ref.LoadScheduleCache(ctx, sp)
+	
 	for k,aircraft := range as.Aircraft {
 		// Need the bare Icao for lookups
 		unprefixedK := strings.TrimPrefix(string(k), "QQ")
@@ -160,22 +164,32 @@ func BackfillReferenceData(ctx context.Context, as *airspace.Airspace) {
 // {{{ getAirspaceForDisplay
 
 // We tart it up with airframe and schedule data, trim out stale entries, and trim to fit box
-func getAirspaceForDisplay(c context.Context, bbox geo.LatlongBox) (airspace.Airspace, error) {
+func getAirspaceForDisplay(ctx context.Context, bbox geo.LatlongBox) (airspace.Airspace, error) {
 	a := airspace.NewAirspace()
+
+	p,err := ds.NewCloudDSProvider(ctx, GoogleCloudProjectId)
+	if err != nil {
+		return a, fmt.Errorf("gAFD/NewCloudDSProvider error:%v", err)
+	}
+	sp := singleton.NewProvider(p)
+
 
 	// Must wait until GAE can securely call into GCE within the same project
 /*
 	dialer := func(network, addr string, timeout time.Duration) (net.Conn, error) {
-		return socket.DialTimeout(c, network, addr, timeout)
+		return socket.DialTimeout(ctx, network, addr, timeout)
 	}
-	if err := a.JustAircraftFromMemcacheServer(c, dialer); err != nil {
+	if err := a.JustAircraftFromMemcacheServer(ctx, dialer); err != nil {
 		return a, fmt.Errorf("gAFD/FromMemcache error:%v", err)
 	}
 */
 
-	if err := a.JustAircraftFromMemcache(c); err != nil {
-		return a, fmt.Errorf("gAFD/FromMemcache error:%v", err)
+	if err := sp.ReadSingleton(ctx, airspaceSingletonName, nil, &a); err != nil {
+		return a, fmt.Errorf("gAFD/ReadSingleton error:%v", err)
 	}
+	//if err := a.JustAircraftFromMemcache(ctx); err != nil {
+	//	return a, fmt.Errorf("gAFD/FromMemcache error:%v", err)
+	//}
 	
 	for k,aircraft := range a.Aircraft {
 		age := time.Since(a.Aircraft[k].Msg.GeneratedTimestampUTC)
@@ -189,7 +203,7 @@ func getAirspaceForDisplay(c context.Context, bbox geo.LatlongBox) (airspace.Air
 		}
 	}
 
-	BackfillReferenceData(c, &a)
+	BackfillReferenceData(ctx, sp, &a)
 	
 	return a,nil
 }
@@ -199,7 +213,7 @@ func getAirspaceForDisplay(c context.Context, bbox geo.LatlongBox) (airspace.Air
 // {{{ addFr24ToAirspace
 
 func addFr24ToAirspace(ctx context.Context, as *airspace.Airspace) {
-	fr,_ := fr24.NewFr24(urlfetch.Client(ctx))
+	fr,_ := fr24.NewFr24(&http.Client{})
 
 	if asFr24,err := fr.FetchAirspace(sfo.KAirports["KSFO"].Box(250,250)); err != nil {
 		return
@@ -238,10 +252,15 @@ func faToAirspace(c context.Context, as *airspace.Airspace) string {
 // {{{ addAExAirspace
 
 func addAExToAirspace(ctx context.Context, box geo.LatlongBox, as *airspace.Airspace) {	
-	if asAEx,err := aex.FetchAirspace(urlfetch.Client(ctx), box); err != nil {
+	if asAEx,err := aex.FetchAirspace(&http.Client{}, box); err != nil {
 		return
 	} else {
-		BackfillReferenceData(ctx, asAEx)
+
+		p,err := ds.NewCloudDSProvider(ctx, GoogleCloudProjectId)
+		if err != nil { return }
+		sp := singleton.NewProvider(p)
+
+		BackfillReferenceData(ctx, sp, asAEx)
 
 		for k,ad := range asAEx.Aircraft {
 			newk := string(k)
