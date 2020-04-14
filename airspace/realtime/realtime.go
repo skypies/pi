@@ -6,7 +6,6 @@ package realtime
 import (
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"net/http"
 	"strings"
 	"time"
@@ -22,6 +21,7 @@ import (
 
 	"github.com/skypies/util/gcp/ds"
 	"github.com/skypies/util/gcp/singleton"
+	hw "github.com/skypies/util/handlerware"
 
 	"github.com/skypies/flightdb/ref"
 	"github.com/skypies/flightdb/fr24"
@@ -37,15 +37,16 @@ var(
 
 // {{{ AirspaceHandler
 
-// AirspaceHandler is a template handler that renders a google maps
+// AirspaceHandler is a context handler that renders a google maps
 // page, which will start polling for realtime flight positions.
 // Requires the "map-poller" template and friends. If passed the `json=1` argument,
 // will return a JSON rendering of the current state of the sky.
+// It expects to be able to extract templates from the context.
 //
 // /?json=1&box_sw_lat=36.1&box_sw_long=-122.2&box_ne_lat=37.1&box_ne_long=-121.5
 //  &comp=1      (for fr24)
 //  &icao=AF1212 (for limiting heatmaps to one aircraft)
-func AirspaceHandler(w http.ResponseWriter, r *http.Request, templates *template.Template) {	
+func AirspaceHandler(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	if r.FormValue("json") != "" {
 		jsonOutputHandler(w,r)
 		return
@@ -66,6 +67,7 @@ func AirspaceHandler(w http.ResponseWriter, r *http.Request, templates *template
 		"URLToPoll": url,
 	}
 
+	templates := hw.GetTemplates(ctx)
 	if err := templates.ExecuteTemplate(w, "map-poller", params); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
