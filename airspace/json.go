@@ -42,7 +42,12 @@ func (ad AircraftData) MarshalJSON() ([]byte, error) {
 
 	if ad.Source == "" { ad.Source = "SkyPi" }
 	callsign := m.Callsign
-	
+
+	urlDescent := ""
+	if d := ad.Schedule.Destination; d=="SFO" || d=="OAK" || d=="SJC" {
+		urlDescent = fmt.Sprintf("/fdb/sideview?idspec=%s&classb=1", idSpec)
+	}
+
 	return json.Marshal(struct {
 		FakeAircraftData
 
@@ -57,7 +62,7 @@ func (ad AircraftData) MarshalJSON() ([]byte, error) {
 		FakeAircraftData: FakeAircraftData(ad),
 		
 		X_UrlSkypi: fmt.Sprintf("/fdb/tracks?idspec=%s", idSpec),
-		X_UrlDescent: fmt.Sprintf("/fdb/descent?idspec=%s&classb=1", idSpec),
+		X_UrlDescent: urlDescent,
 		X_UrlFA: fmt.Sprintf("http://flightaware.com/live/modes/%s/ident/%s/redirect", string(m.Icao24), callsign),
 		X_UrlFR24: fmt.Sprintf("http://www.flightradar24.com/%s", callsign),
 		X_DataSystem: m.DataSystem(),
