@@ -24,6 +24,7 @@ package main
 // {{{ import()
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"hash/fnv"
@@ -37,8 +38,6 @@ import (
 	"time"
 
 	"cloud.google.com/go/pubsub"
-	
-	"golang.org/x/net/context"
 
 	"github.com/skypies/adsb"
 	"github.com/skypies/adsb/trackbuffer"

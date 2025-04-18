@@ -12,7 +12,7 @@ package main
 
 import (
 	"bufio"
-	"golang.org/x/net/context"
+	"context"
 	"flag"
 	"log"
 	"net"
